@@ -102,8 +102,13 @@ struct StatusBar: View {
         case .videos:
             "Export folder \(folderState) · \(model.videos.freeSpace.map { bytes($0) + " free" } ?? "free space unknown")"
         case .photos:
-            model.settings.settings.photos.resumeAfter.map { "Continuing after \($0.formatted(date: .abbreviated, time: .omitted))" }
-                ?? "Starting from the oldest photo"
+            if let tally = model.photos.autoTally {
+                "Auto rate: \(tally.rounds) rounds · \(tally.rated.formatted()) rated · "
+                    + (1...5).map { "\($0)★ \((tally.starCounts[$0] ?? 0).formatted())" }.joined(separator: "  ")
+            } else {
+                model.settings.settings.photos.resumeAfter.map { "Continuing after \($0.formatted(date: .abbreviated, time: .omitted))" }
+                    ?? "Starting from the oldest photo"
+            }
         case .activity, .settings:
             "Data folder: \(model.dataDirectory.path)"
         }

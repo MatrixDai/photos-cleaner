@@ -27,6 +27,10 @@ private struct PhotoScopeView: View {
                 Text("Older than")
                 TextField("", value: days, format: .number).frame(width: 70)
                 Stepper("days", value: days, in: VideoSettings.olderThanDaysRange)
+                Toggle("Auto rate and resume", isOn: autoRate)
+                    .toggleStyle(.checkbox)
+                    .help("Rate every round with the suggested stars and scan the next one, without the review table")
+                    .padding(.leading, 12)
             }
             radio(.dateRange) {
                 Text("Taken from")
@@ -74,6 +78,10 @@ private struct PhotoScopeView: View {
                   systemImage: "info.circle")
                 .foregroundStyle(.secondary)
         }
+    }
+
+    private var autoRate: Binding<Bool> {
+        Binding(get: { model.photos.autoRate }, set: { model.photos.autoRate = $0 })
     }
 
     private var defaultFrom: Date { Calendar.current.date(byAdding: .month, value: -1, to: .now)! }

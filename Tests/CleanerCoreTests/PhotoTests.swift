@@ -351,4 +351,72 @@ struct PhotoModelTests {
         await model.photos.scan()
         #expect(model.photos.adjustedCount == 0)
     }
+
+    @Test func autoRateRunsRoundsUntilNoUnratedPhotosAreLeft() async throws {
+        let library = FakeLibrary(), analyzer = FakeAnalyzer()
+        let old = Date.now.addingTimeInterval(-400 * 86_400)
+        for index in 0..<25 {
+            library.addPhoto("p\(index)", created: old.addingTimeInterval(Double(index) * 3600))
+            analyzer.camera("p\(index)", score: index < 5 ? -0.8 : 0.5)
+        }
+        library.addPhoto("rated", created: old.addingTimeInterval(1800), rating: 3)
+        analyzer.camera("rated", score: -0.8)
+        let model = try await model(library, analyzer)
+        model.settings.update { $0.photos.cameraPhotosPerRun = 10 }
+        model.photos.autoRate = true
+        await model.photos.scan()
+
+        let tally = try #require(model.photos.autoTally)
+        #expect(tally.rounds == 3 && tally.rated == 25)
+        #expect(tally.starCounts == [1: 5, 2: 0, 3: 0, 4: 20, 5: 0])
+        #expect(library.rating("p0") == 1 && library.rating("p24") == 4 && library.rating("rated") == 3)
+        #expect(model.settings.settings.photos.resumeAfter == old.addingTimeInterval(24 * 3600))
+        #expect(model.photos.scan == nil && !model.photos.isAutoRunning)
+        #expect(model.photos.notice?.hasPrefix("Done: rated 25 photos in 3 rounds") == true)
+        await model.refreshActivity()
+        #expect(model.runs.count == 6)
+    }
+
+    @Test func autoRateStopsWhenAScanFails() async throws {
+        let library = FakeLibrary(), analyzer = FakeAnalyzer()
+        let old = Date.now.addingTimeInterval(-400 * 86_400)
+        for index in 0..<10 {
+            library.addPhoto("p\(index)", created: old.addingTimeInterval(Double(index) * 3600))
+            analyzer.fail("p\(index)")
+        }
+        let model = try await model(library, analyzer)
+        model.photos.autoRate = true
+        await model.photos.scan()
+        #expect(model.photos.autoTally?.rounds == 0)
+        #expect(model.photos.notice?.contains("Stopped after 0 rounds") == true)
+        #expect(model.settings.settings.photos.resumeAfter == nil)
+    }
+
+    @Test func autoRateIsIgnoredForADateRange() async throws {
+        let library = FakeLibrary(), analyzer = FakeAnalyzer()
+        library.addPhoto("p", created: ISO8601DateFormatter().date(from: "2025-06-10T08:00:00Z")!)
+        analyzer.camera("p", score: 0.5)
+        let model = try await model(library, analyzer)
+        model.settings.update {
+            $0.photos.scope.kind = .dateRange
+            $0.photos.scope.from = "2025-06-09"
+            $0.photos.scope.to = "2025-06-11"
+        }
+        model.photos.autoRate = true
+        #expect(!model.photos.autoRateApplies)
+        await model.photos.scan()
+        #expect(model.photos.autoTally == nil && model.photos.photosToRate.map(\.id) == ["p"])
+        #expect(library.rating("p") == 0)
+    }
+
+    @Test func togglingAutoRateClearsTheReviewTable() async throws {
+        let library = FakeLibrary(), analyzer = FakeAnalyzer()
+        library.addPhoto("p", created: Date.now.addingTimeInterval(-400 * 86_400))
+        analyzer.camera("p", score: 0.5)
+        let model = try await model(library, analyzer)
+        await model.photos.scan()
+        #expect(!model.photos.photosToRate.isEmpty)
+        model.photos.autoRate = true
+        #expect(model.photos.scan == nil)
+    }
 }

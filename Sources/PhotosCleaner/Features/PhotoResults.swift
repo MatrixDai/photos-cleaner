@@ -14,7 +14,9 @@ struct PhotoResults: View {
     }
 
     var body: some View {
-        if let scan = photos.scan, scan.refusal == nil, !photos.photosToRate.isEmpty {
+        if let tally = photos.autoTally {
+            AutoRatePanel(model: model, tally: tally)
+        } else if let scan = photos.scan, scan.refusal == nil, !photos.photosToRate.isEmpty {
             VStack(alignment: .leading, spacing: 10) {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(summary(scan)).font(.callout).foregroundStyle(.secondary)
@@ -80,6 +82,30 @@ struct PhotoResults: View {
         }
         parts.append("double-click a photo to review it")
         return parts.joined(separator: " · ")
+    }
+}
+
+private struct AutoRatePanel: View {
+    let model: AppModel
+    let tally: AutoRateTally
+
+    var body: some View {
+        VStack(spacing: 14) {
+            Image(systemName: "star.leadinghalf.filled").font(.largeTitle).foregroundStyle(.secondary)
+            Text(model.photos.isAutoRunning ? "Auto rate and resume · round \(tally.rounds + 1)" : "Auto rate and resume")
+                .font(.title3)
+            Text("\(tally.rated.formatted()) photos rated so far" + resumeText).foregroundStyle(.secondary)
+            StarCountsRow(counts: tally.starCounts, adjusted: 0)
+            if let notice = model.photos.notice {
+                Text(notice).foregroundStyle(.secondary).multilineTextAlignment(.center).frame(maxWidth: 520)
+            }
+        }
+        .padding(24)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var resumeText: String {
+        model.settings.settings.photos.resumeAfter.map { " · up to \($0.formatted(date: .abbreviated, time: .omitted))" } ?? ""
     }
 }
 
@@ -225,14 +251,17 @@ private struct PhotoPreview: View {
 struct PhotoActionBar: View {
     let model: AppModel
     @State private var confirmingRate = false
+    @State private var confirmingAuto = false
 
     private var photos: PhotoModel { model.photos }
 
     var body: some View {
         HStack {
-            Button("Scan") { Task { await photos.scan() } }
-                .disabled(!photos.canScan)
-                .keyboardShortcut("r", modifiers: .command)
+            Button(photos.autoRateApplies ? "Scan & Rate" : "Scan") {
+                if photos.autoRateApplies { confirmingAuto = true } else { Task { await photos.scan() } }
+            }
+            .disabled(!photos.canScan)
+            .keyboardShortcut("r", modifiers: .command)
             Button(photos.photosToRate.isEmpty ? "Rate & Mark" : "Rate & Mark \(photos.photosToRate.count.formatted()) photos") {
                 confirmingRate = true
             }
@@ -244,6 +273,12 @@ struct PhotoActionBar: View {
             Button("Rate & Mark") { Task { await photos.rateAndMark() } }
         } message: {
             Text(rateMessage)
+        }
+        .confirmationDialog("Auto rate all unrated photos older than \(model.settings.settings.photos.scope.olderThanDays) days?",
+                            isPresented: $confirmingAuto) {
+            Button("Scan & Rate") { Task { await photos.scan() } }
+        } message: {
+            Text("Rounds of \(model.settings.settings.photos.cameraPhotosPerRun.formatted()) camera photos are scanned and rated with the suggested stars, without review, until none are left or you cancel. Stars already set are kept.")
         }
     }
 
