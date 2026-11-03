@@ -4,7 +4,6 @@ import SwiftUI
 
 struct ActivityView: View {
     let model: AppModel
-    @State private var confirmingReset = false
 
     var body: some View {
         Form {
@@ -27,32 +26,10 @@ struct ActivityView: View {
                     }
                 }
             }
-            Section("Data") {
-                LabeledContent("Folder", value: model.dataDirectory.path)
-                HStack {
-                    Button("Reveal in Finder") {
-                        NSWorkspace.shared.activateFileViewerSelecting([model.settings.fileURL])
-                    }
-                    Button("Reset All Settings…", role: .destructive) { confirmingReset = true }
-                        .disabled(model.jobs.isBusy)
-                }
-                if let corrupt = model.settings.recoveredCorruptFile {
-                    Text("settings.json couldn't be read, so defaults were loaded. The old file was kept as \(corrupt.lastPathComponent).")
-                        .foregroundStyle(.orange)
-                }
-                if let error = model.settings.saveError {
-                    Text("Couldn't save settings: \(error)").foregroundStyle(.red)
-                }
-            }
         }
         .formStyle(.grouped)
         .navigationTitle("Activity")
         .task { await model.refreshActivity() }
-        .confirmationDialog("Reset all settings to their defaults?", isPresented: $confirmingReset) {
-            Button("Reset", role: .destructive) { Task { await model.resetAllSettings() } }
-        } message: {
-            Text("Albums, photos and exported files aren't touched.")
-        }
     }
 
     private func describe(_ row: AlbumSummaryRow) -> String {

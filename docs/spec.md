@@ -110,7 +110,7 @@ These rules hold regardless of settings, and each one has a unit test.
 
 ## UI layout and settings
 
-The window is a `NavigationSplitView` with three pages: Videos, Photos and Activity. Each mode lives on one page: its settings at the top, results in the middle, and an action bar (Scan, Run, Revert…, progress, Cancel) at the bottom. Videos mode has no Revert. Review happens in Photos itself, so there are no in-app review pages and no separate Settings window.
+The window is a `NavigationSplitView` with four pages: Videos, Photos, Activity and Settings. Each mode lives on one page: only its scope at the top, results in the middle, and an action bar (Scan, Run, Revert…, progress, Cancel) at the bottom. Every other setting, for both modes, is on the Settings page. Videos mode has no Revert. Review happens in Photos itself, so there are no in-app review pages. The status bar sits below the split view, never over a page.
 
 ```
 ┌──────────────────┬───────────────────────────────────────────────────────────┐
@@ -119,10 +119,10 @@ The window is a `NavigationSplitView` with three pages: Videos, Photos and Activ
 │   Cleanup        │ │ (•) Older than [ 90 ] days  ( ) Taken [2015-01-01]–[…]│ │
 │ PHOTOS           │ │ ⓘ A date range re-rates every photo in it             │ │
 │ ▸ Rating &       │ └───────────────────────────────────────────────────────┘ │
-│   Similar Shots  │ ▸ Settings (thresholds, camera photos per run, albums)    │
+│   Similar Shots  │                                                           │
 │ APP              │ ┌ Results ──────────────────────────────────────────────┐ │
 │   Activity       │ │ Score histogram with 4 thresholds                     │ │
-│                  │ │ 1★ 412 · 2★ 1,033 · 3★ 4,870 · 4★ 2,240 · 5★ 1,445    │ │
+│   Settings       │ │ 1★ 412 · 2★ 1,033 · 3★ 4,870 · 4★ 2,240 · 5★ 1,445    │ │
 │                  │ │ Similar: 318 groups · 1★96 2★210 3★402 4★300 5★96     │ │
 │                  │ └───────────────────────────────────────────────────────┘ │
 │                  │ [Scan] [Rate & Mark] [Revert…] ██░░ 3,800/10,000 [Cancel] │
@@ -133,9 +133,10 @@ The window is a `NavigationSplitView` with three pages: Videos, Photos and Activ
 
 Pages:
 
-- **Videos · Export & Cleanup:** a Settings group (export folder with Choose…, Reveal in Finder and writable badge; older than N days; file name template with live preview; parallel exports; album name), a results table (date, name, size, status, file) and the action bar: Scan, Export & Mark N, progress, Cancel.
-- **Photos · Rating & Similar Shots:** a Scope group (older than N days, or a from–to date range with a hint that it re-rates every photo in it), a collapsible Settings group (star thresholds, camera photos per run, album names), results (histogram, a per-star count table (1★–5★) for this scan's photos and for those in similar-shot groups, plus the similar-shot group count and a preview grid shown before anything is written) and the action bar: Scan, Rate & Mark N, Revert…, progress, Cancel.
-- **Activity:** the run log, an album summary (each app album's current size and the change since the last run, e.g. "video-to-delete: 12 videos, 38 fewer than after the last run"), the data folder with Reveal in Finder, and Reset all settings.
+- **Videos · Export & Cleanup:** older than N days, a results table (date, name, size, status, file) and the action bar: Scan, Export & Mark N, progress, Cancel.
+- **Photos · Rating & Similar Shots:** a Scope group (older than N days, or a from–to date range with a hint that it re-rates every photo in it), results (histogram, a per-star count table (1★–5★) for this scan's photos and for those in similar-shot groups, plus the similar-shot group count and a preview grid shown before anything is written) and the action bar: Scan, Rate & Mark N, Revert…, progress, Cancel.
+- **Activity:** the run log, an album summary (each app album's current size and the change since the last run, e.g. "video-to-delete: 12 videos, 38 fewer than after the last run").
+- **Settings:** a Videos section (export folder with Choose…, Reveal in Finder and writable badge; file name template with live preview; parallel exports; album name), a Photos section (camera photos per run, star thresholds, the two album names) and a Data section (the data folder with Reveal in Finder, and Reset all settings).
 
 **Busy state.** While a job runs, the status bar shows the busy mode and progress on every page. Scan, Export, Rate and Revert buttons in both modes are disabled until it finishes or is cancelled. Switching pages during a job is allowed.
 
@@ -143,7 +144,7 @@ Pages:
 
 **Status bar,** from left: Photos authorization, busy state (with "Keeping Mac awake" while a job runs), then mode-specific detail. On Videos pages that's the export folder's writable state and free space (from `volumeAvailableCapacityForImportantUsageKey`, falling back to `volumeAvailableCapacityKey`, hidden if neither is available). On Photos pages it's where older-than mode will continue from. Export & Mark warns when the planned size exceeds free space.
 
-**Writable check.** It runs at launch, when the export folder changes and before each export job. It creates `.photoscleaner-write-test-<uuid>` in the folder, writes 1 byte, reads it back and deletes it. It doesn't inspect the filesystem type.
+**Writable check.** It runs at launch, when the export folder changes and before each export job. A folder that doesn't exist yet, such as the default `~/Downloads/PhotosCleaner/Videos`, isn't an error: the page shows "Created on first export", and Export & Mark creates it just before its own check. It creates `.photoscleaner-write-test-<uuid>` in the folder, writes 1 byte, reads it back and deletes it. It doesn't inspect the filesystem type.
 
 Persistence:
 
@@ -156,7 +157,7 @@ Persistence:
 
 Videos mode exports every video older than N days (default 90) to `<exportDir>/<yyyy>/<yyyy-MM-dd> <original name>`, verifies each file, keeps only one local copy of identical content, then adds the video to `video-to-delete`. The app never rates videos; it only respects stars the user set, where 3★ or higher means keep.
 
-**Settings** (top of the Export & Cleanup page): export folder, older than N days, file name template, parallel exports (1–4, default 2), album name.
+**Settings:** older than N days on the Export & Cleanup page; export folder, file name template, parallel exports (1–4, default 2) and album name on the Settings page.
 
 **Fixed behavior:** favorites are included, hidden videos are excluded, videos the user rated 3★ or higher are skipped entirely (not exported, not marked, and removed from video-to-delete if already there), edited versions are always exported alongside the original, and the file date is always the capture date.
 
@@ -172,7 +173,7 @@ Videos mode exports every video older than N days (default 90) to `<exportDir>/<
 4. **Resolve the capture date** (`CaptureDateResolver`). iPhone `.MOV` files carry the date below; `.mp4` files from chat and Android apps usually carry neither it nor `AVAsset.creationDate`, so they take the last fallback. Read `AVMetadataIdentifier.quickTimeMetadataCreationDate` from the temp file. It's an ISO 8601 string with a UTC offset (e.g. `2026-02-28T23:14:05+0800`). Format `yyyy-MM-dd` in that offset's time zone, so the date is the local date where the video was recorded. Fallbacks, in order: `AVAsset.creationDate`, then `PHAsset.creationDate` in the system time zone. Record which source was used.
 5. **Build the name** (`NamingEngine`). The default template is `{yyyy}/{yyyy}-{MM}-{dd} {filename}`. Tokens: `{yyyy} {MM} {dd} {filename} {basename} {ext}`. The filename comes from `PHAssetResource.filename`. Replace `/` and `:` with `_`, normalize to Unicode NFC (the files will be read on Linux) and trim whitespace.
 6. **Handle name collisions.** If the target path exists, its content is different (identical content was caught in step 3), so try ` (2)`, ` (3)` and so on before the extension, e.g. `2026-02-28 IMG_0001 (2).MOV`. Never overwrite.
-7. **Move into place.** Create the year folder if needed, then `FileManager.moveItem` from temp to the final path. Both are on the same volume, so the rename is atomic. Add the file to the index.
+7. **Move into place.** If the export folder itself has vanished, stop: recreating it would write onto the boot disk when an external volume was unmounted. Otherwise create the year folder if needed, then `FileManager.moveItem` from temp to the final path. Both are on the same volume, so the rename is atomic. Add the file to the index.
 8. **Verify.** Re-read the final file, compute SHA-256 and compare it with the write-time hash. Also check the size against `dataSize` when that's available. On mismatch, delete the final file and mark the video `failed`.
 
 **Mark.** A video is marked once all its resources are verified, whether written or already local. Marks are written during the job in batches of 10 videos, and the pending batch is written before Cancel stops, so a crash leaves at most 10 verified videos unmarked. The next run downloads those again, finds them already local, and marks them without a second copy.
@@ -187,10 +188,10 @@ Every Export & Mark also removes from `video-to-delete` each video the user has 
 
 Photos mode rates camera photos in a chosen scope 1★–5★ with one rule — four star thresholds — and adds every 1★–2★ photo that isn't part of a similar-shot group to `photo-low-quality`. It also groups similar shots taken close together and adds them, whatever their stars, only to `photo-duplicated`. It never exports or deletes photos, and no LLM is involved.
 
-**Settings** (top of the Rating & Similar Shots page):
+**Settings:**
 
-- **Scope:** older than N days (default 90), or taken between a start and end date.
-- **Star thresholds**, **Camera photos per run** (default 10,000), and the two album names.
+- **Scope**, on the Rating & Similar Shots page: older than N days (default 90), or taken between a start and end date.
+- On the Settings page: **Star thresholds**, **Camera photos per run** (default 10,000), and the two album names. The histogram's draggable thresholds edit the same values.
 
 **Scope** (`PhotoScope`). Image assets only; hidden photos excluded, favorites included. The two scope kinds select photos differently:
 
@@ -329,7 +330,8 @@ The rule throughout: a failure skips the affected item and is logged; only condi
 | Both | App album renamed or deleted in Photos | Find by stored id, then by name, else recreate |
 | Both | User removes an app-marked item from its album in Photos | Not remembered; the next run may add it back. To keep a photo or video, rate it 3★ or higher |
 | Videos | Export folder not writable at job start | Block the job; show a ✗ badge with the error text |
-| Videos | Folder disappears mid-job (unmount, network drop) | Abort after writing the pending mark batch; the current temp file is left for cleanup |
+| Videos | Folder disappears mid-job (unmount, network drop) | Abort after writing the pending mark batch, without recreating the folder; the current temp file is left for cleanup |
+| Videos | Export folder doesn't exist yet | Shown as "Created on first export"; Export & Mark creates it |
 | Videos | Disk full during write | Abort, delete the current temp file, show the free-space figure |
 | Videos | iCloud download fails or times out | Retry 3× (5 s, 30 s, 120 s), then mark `failed` and continue |
 | Videos | Downloaded video identical to an existing local file | Discard the new copy, count the existing file, show `already local` |

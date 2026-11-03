@@ -26,7 +26,17 @@ public final class JobCenter {
 
     @discardableResult
     public func start(mode: JobMode, name: String, work: @escaping JobWork) async -> Bool {
-        guard active == nil else { return false }
+        await launch(mode: mode, name: name, work: work) != nil
+    }
+
+    /// Returns nil when another job is already running.
+    @discardableResult
+    public func run(mode: JobMode, name: String, work: @escaping JobWork) async -> FinishedJob? {
+        await launch(mode: mode, name: name, work: work)?.value ?? nil
+    }
+
+    private func launch(mode: JobMode, name: String, work: @escaping JobWork) async -> Task<FinishedJob?, Never>? {
+        guard active == nil else { return nil }
         let job = ActiveJob(mode: mode, name: name)
         active = job
         progress = nil
@@ -36,9 +46,10 @@ public final class JobCenter {
             stream = try await runner.start(mode: mode, name: name, albumSnapshot: albumSnapshot, work: work)
         } catch {
             active = nil
-            return false
+            return nil
         }
-        Task {
+        return Task {
+            var result: FinishedJob?
             for await event in stream {
                 switch event {
                 case .progress(let update): progress = update
@@ -48,11 +59,12 @@ public final class JobCenter {
                     active = nil
                     progress = nil
                     lastFinished = finished
+                    result = finished
                     onFinish?(finished)
                 }
             }
+            return result
         }
-        return true
     }
 
     public func cancel() async {

@@ -1,41 +1,90 @@
 import CleanerCore
 import SwiftUI
 
-struct VideoPage: View {
-    let model: AppModel
-
-    var body: some View {
-        ModePage(model: model, mode: .videos, title: "Videos · Export & Cleanup",
-                 placeholder: "Export settings and results arrive in Phase 2.",
-                 actions: ["Scan", "Export & Mark"])
-    }
-}
-
 struct PhotoPage: View {
     let model: AppModel
 
     var body: some View {
-        ModePage(model: model, mode: .photos, title: "Photos · Rating & Similar Shots",
-                 placeholder: "Scope, thresholds and results arrive in Phases 3 and 4.",
-                 actions: ["Scan", "Rate & Mark", "Revert…"])
+        VStack(spacing: 0) {
+            PhotoScopeView(model: model).padding(16)
+            Divider()
+            ContentUnavailableView("Rating & Similar Shots", systemImage: "photo.stack",
+                                   description: Text("Scan, results and Rate & Mark arrive in Phases 3 and 4."))
+            Divider()
+            ActionBar(jobs: model.jobs, mode: .photos, actions: ["Scan", "Rate & Mark", "Revert…"])
+        }
+        .navigationTitle("Photos · Rating & Similar Shots")
     }
 }
 
-private struct ModePage: View {
+private struct PhotoScopeView: View {
     let model: AppModel
-    let mode: JobMode
-    let title: String
-    let placeholder: String
-    let actions: [String]
+
+    private var scope: PhotoScopeSetting { model.settings.settings.photos.scope }
 
     var body: some View {
-        VStack(spacing: 0) {
-            ContentUnavailableView(title, systemImage: mode == .videos ? "video" : "photo.stack",
-                                   description: Text(placeholder))
-            Divider()
-            ActionBar(jobs: model.jobs, mode: mode, actions: actions)
+        VStack(alignment: .leading, spacing: 10) {
+            Picker("Scope", selection: kind) {
+                HStack {
+                    Text("Older than")
+                    TextField("", value: days, format: .number).frame(width: 70)
+                    Stepper("days", value: days, in: VideoSettings.olderThanDaysRange)
+                }
+                .tag(PhotoScopeSetting.Kind.olderThan)
+                HStack {
+                    Text("Taken from")
+                    DatePicker("", selection: date(\.from, fallback: defaultFrom), displayedComponents: .date).labelsHidden()
+                    Text("to")
+                    DatePicker("", selection: date(\.to, fallback: .now), displayedComponents: .date).labelsHidden()
+                }
+                .tag(PhotoScopeSetting.Kind.dateRange)
+            }
+            .pickerStyle(.radioGroup)
+            if scope.kind == .dateRange {
+                if let from = scope.from, let to = scope.to, to < from {
+                    Label("The end date is before the start date.", systemImage: "exclamationmark.triangle").foregroundStyle(.red)
+                }
+                Label("A date range re-rates every photo in it, overwriting existing stars, and regroups its similar shots.",
+                      systemImage: "info.circle")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
         }
-        .navigationTitle(title)
+        .disabled(model.jobs.isBusy)
+    }
+
+    private var defaultFrom: Date { Calendar.current.date(byAdding: .month, value: -1, to: .now)! }
+
+    private var kind: Binding<PhotoScopeSetting.Kind> {
+        Binding(get: { scope.kind }, set: { kind in
+            model.settings.update {
+                $0.photos.scope.kind = kind
+                if kind == .dateRange {
+                    $0.photos.scope.from = $0.photos.scope.from ?? Self.day(defaultFrom)
+                    $0.photos.scope.to = $0.photos.scope.to ?? Self.day(.now)
+                }
+            }
+        })
+    }
+
+    private var days: Binding<Int> {
+        let range = VideoSettings.olderThanDaysRange
+        return Binding(get: { scope.olderThanDays },
+                       set: { value in model.settings.update { $0.photos.scope.olderThanDays = min(max(value, range.lowerBound), range.upperBound) } })
+    }
+
+    private func date(_ keyPath: WritableKeyPath<PhotoScopeSetting, String?>, fallback: Date) -> Binding<Date> {
+        Binding(get: { scope[keyPath: keyPath].flatMap(Self.parse) ?? fallback },
+                set: { value in model.settings.update { $0.photos.scope[keyPath: keyPath] = Self.day(value) } })
+    }
+
+    private static let dayFormat = Date.ISO8601FormatStyle(timeZone: .current).year().month().day().dateSeparator(.dash)
+
+    private static func day(_ date: Date) -> String {
+        date.formatted(dayFormat)
+    }
+
+    private static func parse(_ day: String) -> Date? {
+        try? dayFormat.parse(day)
     }
 }
 
@@ -51,17 +100,7 @@ private struct ActionBar: View {
                 .disabled(jobs.isBusy)
                 .help("Phase 1 placeholder: a 10-second job that only reports progress")
             Spacer()
-            if let active = jobs.active {
-                if active.mode == mode {
-                    ProgressView(value: Double(jobs.progress?.done ?? 0), total: Double(jobs.progress?.total ?? 1))
-                        .frame(width: 160)
-                    Text("\(jobs.progress?.done ?? 0)/\(jobs.progress?.total ?? 0)").monospacedDigit()
-                    Button("Cancel") { Task { await jobs.cancel() } }
-                        .keyboardShortcut(".", modifiers: .command)
-                } else {
-                    Text("\(active.mode.title) is busy").foregroundStyle(.secondary)
-                }
-            }
+            JobProgressView(jobs: jobs, mode: mode)
         }
         .padding(12)
     }

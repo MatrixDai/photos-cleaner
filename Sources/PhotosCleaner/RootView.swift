@@ -3,7 +3,7 @@ import CleanerCore
 import SwiftUI
 
 enum Page: String, CaseIterable, Identifiable {
-    case videos, photos, activity
+    case videos, photos, activity, settings
 
     var id: String { rawValue }
 
@@ -12,6 +12,7 @@ enum Page: String, CaseIterable, Identifiable {
         case .videos: "Export & Cleanup"
         case .photos: "Rating & Similar Shots"
         case .activity: "Activity"
+        case .settings: "Settings"
         }
     }
 
@@ -20,6 +21,7 @@ enum Page: String, CaseIterable, Identifiable {
         case .videos: "video"
         case .photos: "photo.stack"
         case .activity: "list.bullet.rectangle"
+        case .settings: "gearshape"
         }
     }
 }
@@ -30,21 +32,28 @@ struct RootView: View {
 
     var body: some View {
         if model.hasFullAccess {
-            NavigationSplitView {
-                List(selection: Binding(get: { page }, set: { page = $0 ?? .videos })) {
-                    Section("Videos") { row(.videos) }
-                    Section("Photos") { row(.photos) }
-                    Section("App") { row(.activity) }
+            VStack(spacing: 0) {
+                NavigationSplitView {
+                    List(selection: Binding(get: { page }, set: { page = $0 ?? .videos })) {
+                        Section("Videos") { row(.videos) }
+                        Section("Photos") { row(.photos) }
+                        Section("App") {
+                            row(.activity)
+                            row(.settings)
+                        }
+                    }
+                    .navigationSplitViewColumnWidth(min: 180, ideal: 200)
+                } detail: {
+                    switch page {
+                    case .videos: VideoPage(model: model)
+                    case .photos: PhotoPage(model: model)
+                    case .activity: ActivityView(model: model)
+                    case .settings: SettingsPage(model: model)
+                    }
                 }
-                .navigationSplitViewColumnWidth(min: 180, ideal: 200)
-            } detail: {
-                switch page {
-                case .videos: VideoPage(model: model)
-                case .photos: PhotoPage(model: model)
-                case .activity: ActivityView(model: model)
-                }
+                Divider()
+                StatusBar(model: model, page: page)
             }
-            .safeAreaInset(edge: .bottom, spacing: 0) { StatusBar(model: model, page: page) }
         } else {
             AccessBlockedView(model: model)
         }
@@ -80,14 +89,22 @@ struct StatusBar: View {
         .background(.bar)
     }
 
+    private var folderState: String {
+        switch model.videos.folderState {
+        case .writable: "writable ✓"
+        case .willBeCreated: "will be created on first export"
+        case .notWritable(let reason): "✗ \(reason)"
+        }
+    }
+
     private var detail: String {
         switch page {
         case .videos:
-            "Export folder: \(model.settings.settings.videos.exportDir.path)"
+            "Export folder \(folderState) · \(model.videos.freeSpace.map { bytes($0) + " free" } ?? "free space unknown")"
         case .photos:
             model.settings.settings.photos.resumeAfter.map { "Continuing after \($0.formatted(date: .abbreviated, time: .omitted))" }
                 ?? "Starting from the oldest photo"
-        case .activity:
+        case .activity, .settings:
             "Data folder: \(model.dataDirectory.path)"
         }
     }
