@@ -99,11 +99,11 @@ public struct PhotoAlbums: Codable, Equatable, Sendable {
 }
 
 public struct PhotoSettings: Codable, Equatable, Sendable {
-    public static let cameraPhotosPerRunRange = 100...100_000
+    public static let cameraPhotosPerRunRange = 100...10_000
 
     public var scope = PhotoScopeSetting()
     public var starThresholds = [-0.3, 0.0, 0.3, 0.6]
-    public var cameraPhotosPerRun = 10_000
+    public var cameraPhotosPerRun = 1_000
     public var resumeAfter: Date?
     public var albums = PhotoAlbums()
 

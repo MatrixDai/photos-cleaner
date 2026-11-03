@@ -1,3 +1,4 @@
+import CoreGraphics
 import CryptoKit
 import Foundation
 @testable import CleanerCore
@@ -73,6 +74,8 @@ final class FakeLibrary: PhotoLibraryService, @unchecked Sendable {
             Dictionary(uniqueKeysWithValues: _photos.filter { ids.contains($0.id) }.map { ($0.id, $0.rating) })
         }
     }
+
+    func image(for photoID: String, side: Int) async -> CGImage? { nil }
 
     func setRatings(_ ratings: [String: Int]) async throws {
         lock.withLock {

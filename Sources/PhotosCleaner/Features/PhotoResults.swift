@@ -1,28 +1,37 @@
-import Charts
 import CleanerCore
 import SwiftUI
 
 struct PhotoResults: View {
     let model: AppModel
+    @State private var selection: Set<String> = []
+    @State private var sortOrder = [KeyPathComparator(\PhotoRow.date)]
+    @State private var previewing: String?
 
     private var photos: PhotoModel { model.photos }
 
+    private var rows: [PhotoRow] {
+        photos.photosToRate.map { PhotoRow(photo: $0) }.sorted(using: sortOrder)
+    }
+
     var body: some View {
         if let scan = photos.scan, scan.refusal == nil, !photos.photosToRate.isEmpty {
-            VStack(alignment: .leading, spacing: 14) {
-                Text(summary(scan)).font(.callout).foregroundStyle(.secondary)
-                ScoreHistogram(model: model)
-                    .frame(height: 220)
-                StarCountsTable(counts: photos.starCounts, lowQuality: photos.lowQualityCount)
-                if scan.scope.isDateRange, scan.alreadyRated > 0 {
-                    Label("\(scan.alreadyRated.formatted()) photos in this range already have stars; they will be re-rated.",
-                          systemImage: "exclamationmark.triangle")
-                        .foregroundStyle(.orange)
+            VStack(alignment: .leading, spacing: 10) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(summary(scan)).font(.callout).foregroundStyle(.secondary)
+                    StarCountsRow(counts: photos.starCounts, adjusted: photos.adjustedCount, lowQuality: photos.lowQualityCount)
+                    if scan.scope.isDateRange, scan.alreadyRated > 0 {
+                        Label("\(scan.alreadyRated.formatted()) photos in this range already have stars; they will be re-rated.",
+                              systemImage: "exclamationmark.triangle")
+                            .foregroundStyle(.orange)
+                    }
                 }
-                Spacer(minLength: 0)
+                .padding(.horizontal, 16)
+                .padding(.top, 12)
+                table
             }
-            .padding(16)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .sheet(item: Binding(get: { previewing.map(PreviewID.init) }, set: { previewing = $0?.id })) { item in
+                PhotoPreview(model: model, ids: rows.map(\.id), current: item.id)
+            }
         } else {
             ContentUnavailableView {
                 Label(photos.scan == nil ? "No scan yet" : "Nothing to rate", systemImage: "photo.stack")
@@ -30,6 +39,35 @@ struct PhotoResults: View {
                 Text(photos.notice ?? "Scan checks each photo's camera EXIF and scores it with Vision. It changes nothing in Photos.")
             }
         }
+    }
+
+    private var table: some View {
+        Table(rows, selection: $selection, sortOrder: $sortOrder) {
+            TableColumn("") { row in Thumbnail(model: model, photo: row.photo) }
+                .width(56)
+            TableColumn("Taken", value: \.date) { row in
+                Text(row.photo.date?.formatted(date: .abbreviated, time: .shortened) ?? "–")
+            }
+            .width(min: 140, ideal: 170)
+            TableColumn("Score", value: \.score) { row in
+                Text(row.score.formatted(.number.precision(.fractionLength(2)))).monospacedDigit()
+            }
+            .width(60)
+            TableColumn("Stars", value: \.suggested) { row in
+                StarPicker(stars: photos.stars(row.photo), adjusted: photos.isAdjusted(row.photo)) { photos.setStars($0, for: row.photo) }
+            }
+            .width(min: 130, ideal: 150)
+            TableColumn("Now", value: \.current) { row in
+                Text(row.current == 0 ? "–" : String(repeating: "★", count: row.current)).foregroundStyle(.secondary)
+            }
+            .width(70)
+        }
+        .contextMenu(forSelectionType: String.self) { ids in
+            if let id = ids.first { Button("Preview") { previewing = id } }
+        } primaryAction: { ids in
+            previewing = ids.first
+        }
+        .disabled(model.jobs.isBusy)
     }
 
     private func summary(_ scan: PhotoScanResult) -> String {
@@ -40,97 +78,156 @@ struct PhotoResults: View {
         if !scan.scope.isDateRange, let resume = scan.resumeAfter {
             parts.append("up to \(resume.formatted(date: .abbreviated, time: .omitted))")
         }
+        parts.append("double-click a photo to review it")
         return parts.joined(separator: " · ")
     }
 }
 
-private struct ScoreHistogram: View {
-    let model: AppModel
-    @State private var dragging: Int?
-
-    private static let binWidth = 0.05
-    private static let colors: [Color] = [.red, .orange, .yellow, .mint, .green]
-
-    private var thresholds: [Double] { model.photos.thresholds }
-
-    private var bins: [(center: Double, count: Int, stars: Int)] {
-        var counts = [Int](repeating: 0, count: Int(2 / Self.binWidth))
-        for photo in model.photos.photosToRate {
-            let index = min(max(Int((photo.score + 1) / Self.binWidth), 0), counts.count - 1)
-            counts[index] += 1
-        }
-        return counts.enumerated().map { index, count in
-            let center = -1 + (Double(index) + 0.5) * Self.binWidth
-            return (center, count, StarRater.stars(for: center, thresholds: thresholds))
-        }
-    }
-
-    var body: some View {
-        Chart {
-            ForEach(bins, id: \.center) { bin in
-                BarMark(x: .value("Score", bin.center), y: .value("Photos", bin.count), width: .ratio(0.9))
-                    .foregroundStyle(Self.colors[bin.stars - 1].opacity(0.7))
-            }
-            ForEach(Array(thresholds.enumerated()), id: \.offset) { index, value in
-                RuleMark(x: .value("Threshold", value))
-                    .foregroundStyle(dragging == index ? Color.accentColor : .primary.opacity(0.6))
-                    .lineStyle(StrokeStyle(lineWidth: dragging == index ? 3 : 2))
-                    .annotation(position: .top) {
-                        Text(value.formatted(.number.precision(.fractionLength(2)))).font(.caption2.monospacedDigit())
-                    }
-            }
-        }
-        .chartXScale(domain: -1...1)
-        .chartXAxisLabel("Aesthetics score — drag a line to move a star threshold")
-        .chartYAxisLabel("Photos")
-        .chartOverlay { proxy in
-            GeometryReader { geometry in
-                Rectangle().fill(.clear).contentShape(Rectangle())
-                    .gesture(DragGesture(minimumDistance: 0)
-                        .onChanged { drag in move(to: drag.location, proxy: proxy, geometry: geometry) }
-                        .onEnded { _ in dragging = nil })
-            }
-        }
-        .disabled(model.jobs.isBusy)
-    }
-
-    private func move(to location: CGPoint, proxy: ChartProxy, geometry: GeometryProxy) {
-        guard let frame = proxy.plotFrame else { return }
-        let x = location.x - geometry[frame].origin.x
-        guard let score: Double = proxy.value(atX: x) else { return }
-        let index = dragging ?? thresholds.enumerated().min { abs($0.element - score) < abs($1.element - score) }!.offset
-        dragging = index
-        let lower = index > 0 ? thresholds[index - 1] : -1
-        let upper = index < thresholds.count - 1 ? thresholds[index + 1] : 1
-        let value = (min(max(score, lower), upper) * 100).rounded() / 100
-        model.settings.update { $0.photos.starThresholds[index] = value }
-    }
+private struct PreviewID: Identifiable {
+    let id: String
 }
 
-private struct StarCountsTable: View {
+struct PhotoRow: Identifiable {
+    let photo: AnalyzedPhoto
+    var id: String { photo.id }
+    var date: Date { photo.date ?? .distantPast }
+    var score: Double { photo.score }
+    var current: Int { photo.rating }
+    var suggested: Double { photo.score }
+}
+
+private struct StarCountsRow: View {
     let counts: [Int: Int]
+    let adjusted: Int
     let lowQuality: Int
 
     var body: some View {
-        Grid(alignment: .trailing, horizontalSpacing: 24, verticalSpacing: 6) {
-            GridRow {
-                Text("")
-                ForEach(1...5, id: \.self) { Text(String(repeating: "★", count: $0)).foregroundStyle(.secondary) }
+        HStack(spacing: 18) {
+            ForEach(1...5, id: \.self) { stars in
+                HStack(spacing: 4) {
+                    Text(String(repeating: "★", count: stars)).foregroundStyle(.yellow)
+                    Text((counts[stars] ?? 0).formatted()).monospacedDigit()
+                }
             }
-            GridRow {
-                Text("Photos this scan").gridColumnAlignment(.leading)
-                ForEach(1...5, id: \.self) { Text((counts[$0] ?? 0).formatted()).monospacedDigit() }
+            Divider().frame(height: 14)
+            Text("\(lowQuality.formatted()) to photo-low-quality")
+            if adjusted > 0 { Text("\(adjusted.formatted()) adjusted by you").foregroundStyle(Color.accentColor) }
+        }
+        .font(.callout)
+    }
+}
+
+struct StarPicker: View {
+    let stars: Int
+    let adjusted: Bool
+    var size: Font = .body
+    let set: (Int) -> Void
+
+    var body: some View {
+        HStack(spacing: 2) {
+            ForEach(1...5, id: \.self) { value in
+                Button { set(value) } label: {
+                    Image(systemName: value <= stars ? "star.fill" : "star")
+                        .foregroundStyle(value <= stars ? (adjusted ? Color.accentColor : .yellow) : .secondary)
+                }
+                .buttonStyle(.plain)
+                .help(adjusted ? "Adjusted by you" : "Suggested by the thresholds")
             }
         }
-        Text("Rate & Mark adds the \(lowQuality.formatted()) photos at 1★–2★ to photo-low-quality.")
-            .font(.caption).foregroundStyle(.secondary)
+        .font(size)
+    }
+}
+
+private struct Thumbnail: View {
+    let model: AppModel
+    let photo: AnalyzedPhoto
+    @State private var image: CGImage?
+
+    var body: some View {
+        Group {
+            if let image {
+                Image(decorative: image, scale: 2).resizable().scaledToFill()
+            } else {
+                Rectangle().fill(.quaternary)
+            }
+        }
+        .frame(width: 44, height: 44)
+        .clipShape(RoundedRectangle(cornerRadius: 4))
+        .task(id: photo.id) { image = await model.photos.image(photo, side: 120) }
+    }
+}
+
+private struct PhotoPreview: View {
+    let model: AppModel
+    let ids: [String]
+    @State var current: String
+    @State private var image: CGImage?
+    @Environment(\.dismiss) private var dismiss
+
+    init(model: AppModel, ids: [String], current: String) {
+        self.model = model
+        self.ids = ids
+        _current = State(initialValue: current)
+    }
+
+    private var photo: AnalyzedPhoto? { model.photos.photosToRate.first { $0.id == current } }
+    private var index: Int { ids.firstIndex(of: current) ?? 0 }
+
+    var body: some View {
+        VStack(spacing: 12) {
+            ZStack {
+                Rectangle().fill(.black.opacity(0.85))
+                if let image {
+                    Image(decorative: image, scale: 1).resizable().scaledToFit()
+                } else {
+                    ProgressView()
+                }
+            }
+            .frame(minWidth: 720, minHeight: 480)
+            if let photo {
+                HStack(spacing: 16) {
+                    Button { step(-1) } label: { Image(systemName: "chevron.left") }
+                        .keyboardShortcut(.leftArrow, modifiers: [])
+                        .disabled(index == 0)
+                    Text("\(index + 1) of \(ids.count)").monospacedDigit().foregroundStyle(.secondary)
+                    Button { step(1) } label: { Image(systemName: "chevron.right") }
+                        .keyboardShortcut(.rightArrow, modifiers: [])
+                        .disabled(index >= ids.count - 1)
+                    Divider().frame(height: 18)
+                    Text(photo.date?.formatted(date: .abbreviated, time: .shortened) ?? "–")
+                    Text("score \(photo.score.formatted(.number.precision(.fractionLength(2))))").monospacedDigit().foregroundStyle(.secondary)
+                    Spacer()
+                    StarPicker(stars: model.photos.stars(photo), adjusted: model.photos.isAdjusted(photo), size: .title2) {
+                        model.photos.setStars($0, for: photo)
+                    }
+                    Text(model.photos.isAdjusted(photo) ? "adjusted" : "suggested").font(.caption).foregroundStyle(.secondary)
+                        .frame(width: 64, alignment: .leading)
+                    Button("Done") { dismiss() }.keyboardShortcut(.defaultAction)
+                }
+                ForEach(1...5, id: \.self) { stars in
+                    Button("") { model.photos.setStars(stars, for: photo) }
+                        .keyboardShortcut(KeyEquivalent(Character("\(stars)")), modifiers: [])
+                        .frame(width: 0, height: 0).opacity(0)
+                }
+            }
+        }
+        .padding(16)
+        .task(id: current) {
+            image = nil
+            if let photo { image = await model.photos.image(photo, side: 1600) }
+        }
+    }
+
+    private func step(_ delta: Int) {
+        let next = index + delta
+        guard ids.indices.contains(next) else { return }
+        current = ids[next]
     }
 }
 
 struct PhotoActionBar: View {
     let model: AppModel
     @State private var confirmingRate = false
-    @State private var revertSheet = false
 
     private var photos: PhotoModel { model.photos }
 
@@ -143,8 +240,6 @@ struct PhotoActionBar: View {
                 confirmingRate = true
             }
             .disabled(!photos.canRate)
-            Button("Revert…") { revertSheet = true }
-                .disabled(model.jobs.isBusy)
             Spacer()
             JobProgressView(jobs: model.jobs, mode: .photos)
         }
@@ -153,7 +248,6 @@ struct PhotoActionBar: View {
         } message: {
             Text(rateMessage)
         }
-        .sheet(isPresented: $revertSheet) { RevertSheet(model: model) }
     }
 
     private var rateTitle: String {
@@ -161,45 +255,13 @@ struct PhotoActionBar: View {
     }
 
     private var rateMessage: String {
-        guard let scan = photos.scan, scan.scope.isDateRange, scan.alreadyRated > 0 else {
-            return "Only unrated photos are rated; stars already set are kept."
+        var lines: [String] = []
+        if photos.adjustedCount > 0 { lines.append("\(photos.adjustedCount.formatted()) of them use the stars you set.") }
+        if let scan = photos.scan, scan.scope.isDateRange, scan.alreadyRated > 0 {
+            lines.append("This overwrites \(scan.alreadyRated.formatted()) existing ratings in the range.")
+        } else {
+            lines.append("Only unrated photos are rated; stars already set are kept.")
         }
-        return "This overwrites \(scan.alreadyRated.formatted()) existing ratings in the range."
-    }
-}
-
-private struct RevertSheet: View {
-    let model: AppModel
-    @Environment(\.dismiss) private var dismiss
-    @State private var roles: Set<AlbumRole> = [.photoLowQuality, .photoDuplicated]
-    @State private var count: Int?
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("Revert Photos mode").font(.headline)
-            Toggle(model.settings.settings.photos.albums.lowQuality.name, isOn: binding(.photoLowQuality))
-            Toggle(model.settings.settings.photos.albums.duplicated.name, isOn: binding(.photoDuplicated))
-            Text(count.map { "Clear the ratings of \($0.formatted()) photos and remove them from \(roles.count) album\(roles.count == 1 ? "" : "s")? Ratings outside the albums stay; to change them, scan their date range again." }
-                 ?? "Counting…")
-                .fixedSize(horizontal: false, vertical: true)
-            HStack {
-                Spacer()
-                Button("Cancel", role: .cancel) { dismiss() }
-                Button("Revert", role: .destructive) {
-                    let selected = roles
-                    dismiss()
-                    Task { await model.photos.revert(selected) }
-                }
-                .disabled(roles.isEmpty || count == nil)
-                .keyboardShortcut(.defaultAction)
-            }
-        }
-        .padding(20)
-        .frame(width: 420)
-        .task(id: roles) { count = await model.photos.revertCount(roles) }
-    }
-
-    private func binding(_ role: AlbumRole) -> Binding<Bool> {
-        Binding(get: { roles.contains(role) }, set: { if $0 { roles.insert(role) } else { roles.remove(role) } })
+        return lines.joined(separator: " ")
     }
 }

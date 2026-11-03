@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 import Observation
 
@@ -6,6 +7,7 @@ import Observation
 public final class PhotoModel {
     public private(set) var scan: PhotoScanResult?
     public private(set) var notice: String?
+    public private(set) var adjustedStars: [String: Int] = [:]
 
     @ObservationIgnored private let settings: SettingsStore
     @ObservationIgnored private let jobs: JobCenter
@@ -44,8 +46,36 @@ public final class PhotoModel {
 
     public var canRate: Bool { !jobs.isBusy && !photosToRate.isEmpty }
 
+    public func suggestedStars(_ photo: AnalyzedPhoto) -> Int {
+        StarRater.stars(for: photo.score, thresholds: thresholds)
+    }
+
+    public func stars(_ photo: AnalyzedPhoto) -> Int {
+        adjustedStars[photo.id] ?? suggestedStars(photo)
+    }
+
+    public func isAdjusted(_ photo: AnalyzedPhoto) -> Bool {
+        adjustedStars[photo.id] != nil
+    }
+
+    /// Setting a photo back to its suggestion drops the adjustment, so later threshold changes apply to it again.
+    public func setStars(_ stars: Int, for photo: AnalyzedPhoto) {
+        guard (1...5).contains(stars) else { return }
+        adjustedStars[photo.id] = stars == suggestedStars(photo) ? nil : stars
+    }
+
+    public var adjustedCount: Int {
+        photosToRate.filter { adjustedStars[$0.id] != nil }.count
+    }
+
     public var starCounts: [Int: Int] {
-        StarRater.counts(photosToRate.map(\.score), thresholds: thresholds)
+        var counts = Dictionary(uniqueKeysWithValues: (1...5).map { ($0, 0) })
+        for photo in photosToRate { counts[stars(photo), default: 0] += 1 }
+        return counts
+    }
+
+    public func image(_ photo: AnalyzedPhoto, side: Int) async -> CGImage? {
+        await library.image(for: photo.id, side: side)
     }
 
     public var lowQualityCount: Int {
@@ -54,6 +84,7 @@ public final class PhotoModel {
 
     public func scan() async {
         notice = nil
+        adjustedStars = [:]
         guard let scope = try? resolvedScope() else { return }
         let scanner = PhotoScanner(library: library, analyzer: analyzer, limit: settings.settings.photos.cameraPhotosPerRun)
         let found = LockedValue<PhotoScanResult?>(nil)
@@ -81,50 +112,32 @@ public final class PhotoModel {
     public func rateAndMark() async {
         guard let scan, canRate, let lowQuality = settings.settings.photos.albums.lowQuality.id else { return }
         let duplicated = settings.settings.photos.albums.duplicated.id
-        let thresholds = thresholds
+        let stars = Dictionary(uniqueKeysWithValues: photosToRate.map { ($0.id, self.stars($0)) })
+        let adjusted = adjustedCount
         let rater = PhotoRater(library: library)
         let finished = await jobs.run(mode: .photos, name: "rate & mark") { context in
-            try await rater.rateAndMark(scan, thresholds: thresholds, lowQualityAlbum: lowQuality, duplicatedAlbum: duplicated, context: context)
+            var summary = try await rater.rateAndMark(scan, stars: stars, lowQualityAlbum: lowQuality, duplicatedAlbum: duplicated, context: context)
+            summary.counts["adjusted"] = adjusted
+            return summary
         }
         guard let finished, case .completed(let summary) = finished.outcome else { return }
         if !scan.scope.isDateRange, let resume = scan.resumeAfter {
             settings.update { $0.photos.resumeAfter = resume }
         }
         self.scan = nil
+        adjustedStars = [:]
         notice = "Rated \(summary.counts["rated"] ?? 0) photos; added \(summary.counts["addedLowQuality"] ?? 0) to photo-low-quality."
-    }
-
-    public func revertCount(_ roles: Set<AlbumRole>) async -> Int {
-        await PhotoReverter(library: library).members(of: albumIDs(roles)).count
-    }
-
-    public func revert(_ roles: Set<AlbumRole>) async {
-        let albums = albumIDs(roles)
-        guard !albums.isEmpty else { return }
-        let reverter = PhotoReverter(library: library)
-        let finished = await jobs.run(mode: .photos, name: "revert") { context in
-            try await reverter.revert(albums: albums, context: context)
-        }
-        if let finished, case .completed(let summary) = finished.outcome {
-            scan = nil
-            notice = "Cleared \(summary.counts["cleared"] ?? 0) ratings and emptied \(albums.count) album\(albums.count == 1 ? "" : "s")."
-        }
     }
 
     public func startOver() {
         settings.update { $0.photos.resumeAfter = nil }
-        scan = nil
-        notice = nil
+        scopeChanged()
     }
 
     public func scopeChanged() {
         scan = nil
         notice = nil
-    }
-
-    private func albumIDs(_ roles: Set<AlbumRole>) -> [String] {
-        AlbumRole.allCases.filter { roles.contains($0) && $0 != .videoToDelete }
-            .compactMap { settings.settings[keyPath: $0.keyPath].id }
+        adjustedStars = [:]
     }
 
     private func resolvedScope() throws -> ResolvedPhotoScope {

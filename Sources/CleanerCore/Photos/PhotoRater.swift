@@ -10,9 +10,9 @@ public struct PhotoRater: Sendable {
         self.library = library
     }
 
-    public func rateAndMark(_ scan: PhotoScanResult, thresholds: [Double], lowQualityAlbum: String, duplicatedAlbum: String?,
+    /// `stars` holds the stars to write per photo: the threshold suggestion, or the user's adjustment.
+    public func rateAndMark(_ scan: PhotoScanResult, stars: [String: Int], lowQualityAlbum: String, duplicatedAlbum: String?,
                             context: JobContext) async throws -> JobSummary {
-        let stars = Dictionary(uniqueKeysWithValues: scan.photos.map { ($0.id, StarRater.stars(for: $0.score, thresholds: thresholds)) })
         let current = await library.ratings(of: Array(stars.keys))
         var writes = stars.filter { id, value in current[id].map { $0 != value } ?? false }
         if !scan.scope.isDateRange {
@@ -40,42 +40,11 @@ public struct PhotoRater: Sendable {
         if !add.isEmpty { try await library.addAssets(add.sorted(), toAlbum: lowQualityAlbum) }
         if !remove.isEmpty { try await library.removeAssets(remove.sorted(), fromAlbum: lowQualityAlbum) }
 
-        var counts = StarRater.counts(scan.photos.map(\.score), thresholds: thresholds).reduce(into: [String: Int]()) {
-            $0["stars\($1.key)"] = $1.value
-        }
+        var counts = stars.values.reduce(into: [String: Int]()) { $0["stars\($1)", default: 0] += 1 }
         counts["rated"] = writes.count
         counts["overwritten"] = overwritten
         counts["addedLowQuality"] = add.count
         counts["removedLowQuality"] = remove.count
         return JobSummary(scope: scan.scope.label, counts: counts)
-    }
-}
-
-public struct PhotoReverter: Sendable {
-    let library: any PhotoLibraryService
-
-    public init(library: any PhotoLibraryService) {
-        self.library = library
-    }
-
-    public func members(of albums: [String]) async -> Set<String> {
-        var members = Set<String>()
-        for album in albums { members.formUnion(await library.albumMembers(id: album)) }
-        return members
-    }
-
-    public func revert(albums: [String], context: JobContext) async throws -> JobSummary {
-        let members = await members(of: albums).sorted()
-        for start in stride(from: 0, to: members.count, by: PhotoRater.writeBatch) {
-            try context.checkCancellation()
-            let batch = members[start..<min(start + PhotoRater.writeBatch, members.count)]
-            try await library.setRatings(Dictionary(uniqueKeysWithValues: batch.map { ($0, 0) }))
-            context.progress(start + batch.count, of: members.count, item: "Clearing ratings")
-        }
-        for album in albums {
-            let inAlbum = await library.albumMembers(id: album)
-            if !inAlbum.isEmpty { try await library.removeAssets(inAlbum.sorted(), fromAlbum: album) }
-        }
-        return JobSummary(counts: ["cleared": members.count, "albums": albums.count])
     }
 }

@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 
 public enum LibraryAuthorization: Sendable, Equatable {
@@ -20,6 +21,7 @@ public protocol PhotoLibraryService: Sendable {
     func photos(_ query: PhotoQuery) async -> [LibraryPhoto]
     func ratings(of ids: [String]) async -> [String: Int]
     func setRatings(_ ratings: [String: Int]) async throws
+    func image(for photoID: String, side: Int) async -> CGImage?
 }
 
 public struct PhotoQuery: Equatable, Sendable {

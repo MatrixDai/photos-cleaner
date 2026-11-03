@@ -142,6 +142,11 @@ public struct LivePhotoLibrary: PhotoLibraryService {
         }
     }
 
+    public func image(for photoID: String, side: Int) async -> CGImage? {
+        guard let asset = PHAsset.fetchAssets(withLocalIdentifiers: [photoID], options: nil).firstObject else { return nil }
+        return await LivePhotoAnalyzer.derivative(asset, side: CGFloat(side))
+    }
+
     private static func kind(of type: PHAssetResourceType) -> LibraryVideoResource.Kind? {
         switch type {
         case .video: .original

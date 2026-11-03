@@ -209,8 +209,9 @@ struct PhotoRaterTests {
     }
 
     private func rate(_ library: FakeLibrary, _ scan: PhotoScanResult, low: String, dup: String) async throws -> JobSummary {
-        try await PhotoRater(library: library).rateAndMark(scan, thresholds: thresholds, lowQualityAlbum: low,
-                                                           duplicatedAlbum: dup, context: JobContext(emit: { _ in }))
+        let stars = Dictionary(uniqueKeysWithValues: scan.photos.map { ($0.id, StarRater.stars(for: $0.score, thresholds: thresholds)) })
+        return try await PhotoRater(library: library).rateAndMark(scan, stars: stars, lowQualityAlbum: low,
+                                                                  duplicatedAlbum: dup, context: JobContext(emit: { _ in }))
     }
 
     @Test func writesStarsAndMarksLowRatedPhotos() async throws {
@@ -268,17 +269,6 @@ struct PhotoRaterTests {
         for photo in photos { library.addPhoto(photo.0, created: base) }
         _ = try await rate(library, result(photos), low: low, dup: dup)
         #expect(library.ratingBatches.map(\.count) == [200, 200, 50])
-    }
-
-    @Test func revertClearsAlbumMembersOnly() async throws {
-        let (library, low, dup) = setup()
-        for (id, rating) in [("a", 1), ("b", 2), ("c", 5)] { library.addPhoto(id, created: base, rating: rating) }
-        library.setMembers(low, ["a"])
-        library.setMembers(dup, ["b"])
-        let summary = try await PhotoReverter(library: library).revert(albums: [low, dup], context: JobContext(emit: { _ in }))
-        #expect(summary.counts["cleared"] == 2)
-        #expect([library.rating("a"), library.rating("b"), library.rating("c")] == [0, 0, 5])
-        #expect(library.albums[low]?.members.isEmpty == true && library.albums[dup]?.members.isEmpty == true)
     }
 }
 
@@ -350,5 +340,48 @@ struct PhotoModelTests {
         await model.photos.rateAndMark()
         #expect(library.rating("p") == 1)
         #expect(model.settings.settings.photos.resumeAfter == resume)
+    }
+
+    @Test func adjustedStarsAreWrittenAndCountedLive() async throws {
+        let library = FakeLibrary(), analyzer = FakeAnalyzer()
+        let old = Date.now.addingTimeInterval(-400 * 86_400)
+        library.addPhoto("good", created: old)
+        library.addPhoto("bad", created: old.addingTimeInterval(3600))
+        analyzer.camera("good", score: 0.7)
+        analyzer.camera("bad", score: -0.8)
+        let model = try await model(library, analyzer)
+        await model.photos.scan()
+        let good = try #require(model.photos.photosToRate.first { $0.id == "good" })
+        let bad = try #require(model.photos.photosToRate.first { $0.id == "bad" })
+        #expect(model.photos.starCounts[5] == 1 && model.photos.starCounts[1] == 1 && model.photos.lowQualityCount == 1)
+
+        model.photos.setStars(2, for: good)
+        model.photos.setStars(4, for: bad)
+        #expect(model.photos.isAdjusted(good) && model.photos.adjustedCount == 2)
+        #expect(model.photos.starCounts[5] == 0 && model.photos.starCounts[2] == 1 && model.photos.starCounts[4] == 1)
+        #expect(model.photos.lowQualityCount == 1)
+
+        model.photos.setStars(4, for: bad)
+        model.photos.setStars(1, for: bad)
+        #expect(!model.photos.isAdjusted(bad) && model.photos.adjustedCount == 1)
+        model.photos.setStars(4, for: bad)
+
+        await model.photos.rateAndMark()
+        #expect(library.rating("good") == 2 && library.rating("bad") == 4)
+        let lowID = try #require(model.settings.settings.photos.albums.lowQuality.id)
+        #expect(library.albums[lowID]?.members == ["good"])
+        #expect(model.photos.adjustedCount == 0)
+        #expect(await eventually { model.runs.first?.counts["adjusted"] == 2 })
+    }
+
+    @Test func adjustmentsAreDroppedByANewScan() async throws {
+        let library = FakeLibrary(), analyzer = FakeAnalyzer()
+        library.addPhoto("p", created: Date.now.addingTimeInterval(-400 * 86_400))
+        analyzer.camera("p", score: 0.7)
+        let model = try await model(library, analyzer)
+        await model.photos.scan()
+        model.photos.setStars(1, for: try #require(model.photos.photosToRate.first))
+        await model.photos.scan()
+        #expect(model.photos.adjustedCount == 0)
     }
 }
