@@ -107,6 +107,41 @@ public struct LivePhotoLibrary: PhotoLibraryService {
         }
     }
 
+    public func photos(_ query: PhotoQuery) async -> [LibraryPhoto] {
+        let options = PHFetchOptions()
+        options.includeHiddenAssets = false
+        var predicates = [NSPredicate(format: "mediaType == %d AND creationDate < %@", PHAssetMediaType.image.rawValue,
+                                      query.upperBound as NSDate)]
+        if let lower = query.lowerBound {
+            predicates.append(NSPredicate(format: query.lowerInclusive ? "creationDate >= %@" : "creationDate > %@", lower as NSDate))
+        }
+        if query.unratedOnly { predicates.append(NSPredicate(format: "rating == 0")) }
+        options.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: predicates)
+        options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: true)]
+        var photos: [LibraryPhoto] = []
+        PHAsset.fetchAssets(with: options).enumerateObjects { asset, _, _ in
+            photos.append(LibraryPhoto(id: asset.localIdentifier, creationDate: asset.creationDate, rating: asset.rating.rawValue,
+                                       isScreenshot: asset.mediaSubtypes.contains(.photoScreenshot)))
+        }
+        return photos
+    }
+
+    public func ratings(of ids: [String]) async -> [String: Int] {
+        var ratings: [String: Int] = [:]
+        PHAsset.fetchAssets(withLocalIdentifiers: ids, options: nil).enumerateObjects { asset, _, _ in
+            ratings[asset.localIdentifier] = asset.rating.rawValue
+        }
+        return ratings
+    }
+
+    public func setRatings(_ ratings: [String: Int]) async throws {
+        try await Self.change {
+            PHAsset.fetchAssets(withLocalIdentifiers: Array(ratings.keys), options: nil).enumerateObjects { asset, _, _ in
+                PHAssetChangeRequest(for: asset).rating = PHAsset.Rating(rawValue: ratings[asset.localIdentifier] ?? 0) ?? .unset
+            }
+        }
+    }
+
     private static func kind(of type: PHAssetResourceType) -> LibraryVideoResource.Kind? {
         switch type {
         case .video: .original

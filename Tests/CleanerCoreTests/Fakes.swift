@@ -28,6 +28,8 @@ final class FakeLibrary: PhotoLibraryService, @unchecked Sendable {
     private var _content: [String: Content] = [:]
     private var _addBatches: [[String]] = []
     private var _downloads: [String] = []
+    private var _photos: [LibraryPhoto] = []
+    private var _ratingBatches: [[String: Int]] = []
     private var nextID = 1
     var onDownload: (@Sendable (String) -> Void)?
 
@@ -40,6 +42,46 @@ final class FakeLibrary: PhotoLibraryService, @unchecked Sendable {
     var createdNames: [String] { lock.withLock { _created } }
     var addBatches: [[String]] { lock.withLock { _addBatches } }
     var downloads: [String] { lock.withLock { _downloads } }
+    var ratingBatches: [[String: Int]] { lock.withLock { _ratingBatches } }
+
+    func addPhoto(_ id: String, created: Date, rating: Int = 0, screenshot: Bool = false) {
+        lock.withLock { _photos.append(LibraryPhoto(id: id, creationDate: created, rating: rating, isScreenshot: screenshot)) }
+    }
+
+    func rating(_ id: String) -> Int? {
+        lock.withLock { _photos.first { $0.id == id }?.rating }
+    }
+
+    func setPhotoRating(_ id: String, _ rating: Int) {
+        lock.withLock {
+            if let index = _photos.firstIndex(where: { $0.id == id }) { _photos[index].rating = rating }
+        }
+    }
+
+    func photos(_ query: PhotoQuery) async -> [LibraryPhoto] {
+        lock.withLock {
+            _photos.filter { photo in
+                guard let date = photo.creationDate, query.contains(date) else { return false }
+                return !query.unratedOnly || photo.rating == 0
+            }
+            .sorted { $0.creationDate! < $1.creationDate! }
+        }
+    }
+
+    func ratings(of ids: [String]) async -> [String: Int] {
+        lock.withLock {
+            Dictionary(uniqueKeysWithValues: _photos.filter { ids.contains($0.id) }.map { ($0.id, $0.rating) })
+        }
+    }
+
+    func setRatings(_ ratings: [String: Int]) async throws {
+        lock.withLock {
+            _ratingBatches.append(ratings)
+            for (id, rating) in ratings {
+                if let index = _photos.firstIndex(where: { $0.id == id }) { _photos[index].rating = rating }
+            }
+        }
+    }
 
     func setStatus(_ status: LibraryAuthorization) { lock.withLock { _status = status } }
 
@@ -187,4 +229,35 @@ func eventually(timeout: Duration = .seconds(5), _ condition: () async -> Bool) 
         try? await Task.sleep(for: .milliseconds(10))
     }
     return await condition()
+}
+
+final class FakeAnalyzer: PhotoAnalyzing, @unchecked Sendable {
+    private let lock = NSLock()
+    private var scores: [String: Double] = [:]
+    private var nonCamera: Set<String> = []
+    private var failing: Set<String> = []
+    private var _tagCalls: [String] = []
+    private var _scoreCalls: [String] = []
+
+    var tagCalls: [String] { lock.withLock { _tagCalls } }
+    var scoreCalls: [String] { lock.withLock { _scoreCalls } }
+
+    func camera(_ id: String, score: Double) { lock.withLock { scores[id] = score } }
+    func notCamera(_ id: String) { lock.withLock { _ = nonCamera.insert(id) } }
+    func fail(_ id: String) { lock.withLock { _ = failing.insert(id) } }
+
+    func cameraTags(_ photoID: String) async throws -> CameraTags {
+        try lock.withLock {
+            _tagCalls.append(photoID)
+            if failing.contains(photoID) { throw FakeError(message: "iCloud download failed") }
+            return nonCamera.contains(photoID) ? CameraTags(make: nil, model: nil) : CameraTags(make: "Apple", model: "iPhone")
+        }
+    }
+
+    func aestheticsScore(_ photoID: String) async throws -> Double {
+        lock.withLock {
+            _scoreCalls.append(photoID)
+            return scores[photoID] ?? 0
+        }
+    }
 }

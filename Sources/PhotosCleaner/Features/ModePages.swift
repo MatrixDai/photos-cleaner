@@ -8,10 +8,9 @@ struct PhotoPage: View {
         VStack(spacing: 0) {
             PhotoScopeView(model: model).padding(16)
             Divider()
-            ContentUnavailableView("Rating & Similar Shots", systemImage: "photo.stack",
-                                   description: Text("Scan, results and Rate & Mark arrive in Phases 3 and 4."))
+            PhotoResults(model: model)
             Divider()
-            ActionBar(jobs: model.jobs, mode: .photos, actions: ["Scan", "Rate & Mark", "Revert…"])
+            PhotoActionBar(model: model).padding(12)
         }
         .navigationTitle("Photos · Rating & Similar Shots")
     }
@@ -40,6 +39,16 @@ private struct PhotoScopeView: View {
                 .tag(PhotoScopeSetting.Kind.dateRange)
             }
             .pickerStyle(.radioGroup)
+            if scope.kind == .olderThan {
+                HStack {
+                    Text(model.settings.settings.photos.resumeAfter.map { "Continuing after \($0.formatted(date: .abbreviated, time: .shortened))" }
+                        ?? "Starting from the oldest unrated photo")
+                    if model.settings.settings.photos.resumeAfter != nil {
+                        Button("Start Over") { model.photos.startOver() }.buttonStyle(.link)
+                    }
+                }
+                .font(.caption).foregroundStyle(.secondary)
+            }
             if scope.kind == .dateRange {
                 if let from = scope.from, let to = scope.to, to < from {
                     Label("The end date is before the start date.", systemImage: "exclamationmark.triangle").foregroundStyle(.red)
@@ -50,6 +59,7 @@ private struct PhotoScopeView: View {
             }
         }
         .disabled(model.jobs.isBusy)
+        .onChange(of: scope) { model.photos.scopeChanged() }
     }
 
     private var defaultFrom: Date { Calendar.current.date(byAdding: .month, value: -1, to: .now)! }
@@ -86,31 +96,4 @@ private struct PhotoScopeView: View {
     private static func parse(_ day: String) -> Date? {
         try? dayFormat.parse(day)
     }
-}
-
-private struct ActionBar: View {
-    let jobs: JobCenter
-    let mode: JobMode
-    let actions: [String]
-
-    var body: some View {
-        HStack {
-            ForEach(actions, id: \.self) { Button($0) {}.disabled(true) }
-            Button("Run Test Job") { Task { await jobs.start(mode: mode, name: "test job", work: testJob) } }
-                .disabled(jobs.isBusy)
-                .help("Phase 1 placeholder: a 10-second job that only reports progress")
-            Spacer()
-            JobProgressView(jobs: jobs, mode: mode)
-        }
-        .padding(12)
-    }
-}
-
-private let testJob: JobWork = { context in
-    let steps = 20
-    for step in 1...steps {
-        try await Task.sleep(for: .milliseconds(500))
-        context.progress(step, of: steps)
-    }
-    return JobSummary(counts: ["steps": steps])
 }
