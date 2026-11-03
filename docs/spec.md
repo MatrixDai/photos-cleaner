@@ -51,10 +51,10 @@ The target is macOS 27 or later on Apple Silicon, built with Xcode 27 in Swift 6
 | App shell | SwiftUI lifecycle with a single `Window` scene (not `WindowGroup`), so only one window can exist |
 | Apple frameworks | Photos (PhotoKit), Vision, AVFoundation (QuickTime metadata), ImageIO (EXIF), CryptoKit (SHA-256) |
 | Persistence | Settings in a JSON file and the run log in a JSONL file, both through `Codable`; no third-party dependencies |
-| Signing | Not sandboxed, Hardened Runtime on, "Sign to Run Locally" |
+| Signing | Not sandboxed, Hardened Runtime on with the `com.apple.security.personal-information.photos-library` entitlement (without it Hardened Runtime blocks Photos), "Sign to Run Locally" |
 | Info.plist | `NSPhotoLibraryUsageDescription`; request `PHAccessLevel.readWrite` |
 
-**Startup checks.** The macOS 27 and Apple Silicon requirements are enforced by the build itself: the deployment target is macOS 27 and the binary is arm64-only, so macOS refuses to launch the app anywhere else. Every rating, resource and Vision API used is therefore present at runtime, and Phase 0 confirms the Vision requests work on the user's Mac. The one thing that can change between launches is Photos access, which the user can revoke in System Settings at any time. On each launch the app checks that `PHPhotoLibrary.authorizationStatus(for: .readWrite)` is `.authorized`, requesting it on first launch. Otherwise it shows only a blocking screen that explains why full access is needed, with Open System Settings › Privacy › Photos and Check Again buttons.
+**Startup checks.** The macOS 27 and Apple Silicon requirements are enforced by the build itself: the deployment target is macOS 27 and the binary is arm64-only, so macOS refuses to launch the app anywhere else. Every rating, resource and Vision API used is therefore present at runtime, and Phase 0 confirmed the Vision requests work on the user's Mac. The one thing that can change between launches is Photos access, which the user can revoke in System Settings at any time. On each launch the app checks that `PHPhotoLibrary.authorizationStatus(for: .readWrite)` is `.authorized`, requesting it on first launch. Otherwise it shows only a blocking screen that explains why full access is needed, with Open System Settings › Privacy › Photos and Check Again buttons.
 
 ```
 PhotosCleaner/
@@ -85,6 +85,7 @@ PhotosCleaner/
 Concurrency model:
 
 - **Identifiers, not objects.** PhotoKit objects aren't `Sendable`, so only `localIdentifier` strings cross actor boundaries. Assets are re-fetched where they're used.
+- **Write blocks are nonisolated.** PhotoKit runs a `performChanges` block on its own queue. A block written in `@MainActor` code inherits main-actor isolation, and Swift 6 stops the app when PhotoKit calls it; the compiler doesn't catch this, because PhotoKit's callbacks aren't annotated `@Sendable`. Every write goes through one nonisolated `PhotoLibraryService` method that takes an `@Sendable` block.
 - **One job at a time, across both modes.** A single `JobRunner` actor runs one job (video scan, export, photo scan, rate, photo revert) and rejects a second. The UI disables every run button except Cancel while a job is active, and shows which mode is busy.
 - **Progress and cancellation.** Jobs publish `AsyncStream<JobEvent>` for progress, item results and errors. They check `Task.isCancelled` between assets, and Cancel finishes the current file cleanly before stopping. While any job runs, the app holds a ProcessInfo.beginActivity token with the userInitiated and idleSystemSleepDisabled options, so the Mac doesn't idle-sleep and App Nap doesn't throttle a multi-hour export.
 - **UI.** Models are `@MainActor @Observable`.
@@ -166,7 +167,7 @@ Videos mode exports every video older than N days (default 90) to `<exportDir>/<
 1. **Pick resources.** Always `.video` (the original). If `.fullSizeVideo` exists, also export it under the same template with ` (edited)` before the extension, e.g. `2026-02-28 IMG_0001 (edited).MOV`. Its name tokens come from the original `.video` resource, since the edited resource's own filename is usually `FullSizeRender.mov`. Each resource goes through steps 2–8.
 2. **Stream to a temp file.** Call `PHAssetResourceManager.requestData` with `isNetworkAccessAllowed = true`. Write each chunk to `<exportDir>/.photoscleaner-tmp/<uuid>.<ext>` and update a running SHA-256 (CryptoKit). Report progress for iCloud downloads. Close the file and call `synchronize()` at the end.
 3. **Skip if already local.** Look up the new file's size in the index. For any existing file of the same size, compare SHA-256. On a match, delete the temp file and count the existing file as this resource's export; the video shows `already local`. Bytes must be downloaded to be compared, but no second copy is kept.
-4. **Resolve the capture date** (`CaptureDateResolver`). Read `AVMetadataIdentifier.quickTimeMetadataCreationDate` from the temp file. It's an ISO 8601 string with a UTC offset (e.g. `2026-02-28T23:14:05+0800`). Format `yyyy-MM-dd` in that offset's time zone, so the date is the local date where the video was recorded. Fallbacks, in order: `AVAsset.creationDate`, then `PHAsset.creationDate` in the system time zone. Record which source was used.
+4. **Resolve the capture date** (`CaptureDateResolver`). iPhone `.MOV` files carry the date below; `.mp4` files from chat and Android apps usually carry neither it nor `AVAsset.creationDate`, so they take the last fallback. Read `AVMetadataIdentifier.quickTimeMetadataCreationDate` from the temp file. It's an ISO 8601 string with a UTC offset (e.g. `2026-02-28T23:14:05+0800`). Format `yyyy-MM-dd` in that offset's time zone, so the date is the local date where the video was recorded. Fallbacks, in order: `AVAsset.creationDate`, then `PHAsset.creationDate` in the system time zone. Record which source was used.
 5. **Build the name** (`NamingEngine`). The default template is `{yyyy}/{yyyy}-{MM}-{dd} {filename}`. Tokens: `{yyyy} {MM} {dd} {filename} {basename} {ext}`. The filename comes from `PHAssetResource.filename`. Replace `/` and `:` with `_`, normalize to Unicode NFC (the files will be read on Linux) and trim whitespace.
 6. **Handle name collisions.** If the target path exists, its content is different (identical content was caught in step 3), so try ` (2)`, ` (3)` and so on before the extension, e.g. `2026-02-28 IMG_0001 (2).MOV`. Never overwrite.
 7. **Move into place.** Create the year folder if needed, then `FileManager.moveItem` from temp to the final path. Both are on the same volume, so the rename is atomic. Add the file to the index.
@@ -193,7 +194,7 @@ Photos mode rates camera photos in a chosen scope 1★–5★ with one rule — 
 
 | | **Older than N days** (catch-up) | **Date range** (redo a window) |
 | --- | --- | --- |
-| Fetch | `creationDate < now − N days` | 00:00 on the start date to 24:00 on the end date, system time zone; Scan disabled if the end is before the start |
+| Fetch | `creationDate > resumeAfter AND creationDate < now − N days AND rating == 0` | 00:00 on the start date to 24:00 on the end date, system time zone; Scan disabled if the end is before the start |
 | Selects | Only **unrated** photos taken after the resume point, oldest first, until the per-run limit of camera photos is reached | **Every** photo in the range, rated or not |
 | Over the limit | Takes the oldest N camera photos; pressing Scan again with no setting change takes the next N | The camera check runs over the whole range first; if it finds more than N camera photos, Scan stops before any scoring: "This range has 14,203 camera photos; the limit is 10,000. Narrow the range." |
 | Nothing left | "No more unrated photos older than 90 days." with a Start over button | "No camera photos in this range." |
@@ -205,9 +206,9 @@ Photos mode rates camera photos in a chosen scope 1★–5★ with one rule — 
 **Camera photos only** (`CameraOriginFilter`). A photo counts as a camera photo only if the EXIF of its original has a non-empty `Make` or `Model`. File names and file types never decide it.
 
 1. **Screenshots** (`mediaSubtypes` contains `.photoScreenshot`) are skipped without reading anything. This shortcut only excludes; no photo is ever included without EXIF.
-2. **Read only the header.** Stream the original (`.photo` resource) with `PHAssetResourceManager.requestData` (`isNetworkAccessAllowed = true`), feed the chunks to an incremental `CGImageSource`, and cancel the request as soon as the EXIF properties are available.
+2. **Read the EXIF of the original.** Stream the original (`.photo` resource) with `PHAssetResourceManager.requestData` (`isNetworkAccessAllowed = true`), feed the chunks to an incremental `CGImageSource`, and cancel the request as soon as the EXIF properties are available.
 
-PhotoKit exposes no camera make or model: `PHAssetExtendedMetadata` (macOS 27) has only caption, keywords and original filename. So for iCloud-only originals ("Optimize Mac Storage") the check downloads data, and Photos may keep what it downloaded in its local cache until it evicts it. Phase 0 measures whether cancelling after the header actually saves the download.
+PhotoKit exposes no camera make or model: `PHAssetExtendedMetadata` (macOS 27) has only caption, keywords and original filename. Phase 0 measured that cancelling early saves nothing for an iCloud-only original: PhotoKit downloads the whole file before delivering the first chunk. With "Optimize Mac Storage" on, the camera check is therefore one original download per photo, about 1–3 s each, and Photos may keep the downloaded originals on disk until it evicts them. It is by far the slowest step of a scan; the aesthetics derivative comes from Photos' local previews in under 0.1 s.
 
 The check runs first in the analysis pass, so non-camera photos never get an aesthetics score or a feature print. The result isn't stored: the resume point keeps older-than mode from checking a photo twice in one pass, and Start over or a date-range scan checks it again. Only camera photos count against the per-run limit: non-camera photos are checked, skipped and not counted, so a scan through a stretch of mostly non-camera photos checks more than N photos to fill its limit.
 
@@ -219,7 +220,7 @@ The check runs first in the analysis pass, so non-camera photos never get an aes
 
 **Per-run limit.** At most N camera photos per scan (default 10,000), selected as in the Scope table; non-camera photos don't count. In older-than mode the limit is extended to the end of the last sequence, so a group is never split across runs. The limit only bounds how long one scan takes. It is unrelated to the write batch of 200, which is how many assets go into one `performChanges` call.
 
-**Star rating** (`StarRater`). After a scan, the page shows a histogram of scores with four draggable thresholds and live counts per star. Starting values are −0.3, 0.0, 0.3 and 0.6: below −0.3 is 1★, −0.3 to 0.0 is 2★, 0.0 to 0.3 is 3★, 0.3 to 0.6 is 4★, and 0.6 or above is 5★. This is the app's only rating rule; similar shots get no special treatment, so a group can be all 4–5★ or all 1–2★. Expect to adjust the thresholds after a few test runs on real photos. An older-than scan rates only unrated photos, so new thresholds reach photos rated earlier only through a date-range scan. To tune them, the page shows how many of this scan's photos will end up at each star, 1★ to 5★, both overall and for those in similar-shot groups. The counts update live as thresholds move, and nothing is written until the user presses Rate & Mark:
+**Star rating** (`StarRater`). After a scan, the page shows a histogram of scores with four draggable thresholds and live counts per star. Starting values are −0.3, 0.0, 0.3 and 0.6: below −0.3 is 1★, −0.3 to 0.0 is 2★, 0.0 to 0.3 is 3★, 0.3 to 0.6 is 4★, and 0.6 or above is 5★. This is the app's only rating rule; similar shots get no special treatment, so a group can be all 4–5★ or all 1–2★. Expect to adjust the thresholds after a few test runs on real photos: in Phase 0, 20 photos from 1999–2007 scored 0.32–0.80, which the starting values would mostly rate 4★. An older-than scan rates only unrated photos, so new thresholds reach photos rated earlier only through a date-range scan. To tune them, the page shows how many of this scan's photos will end up at each star, 1★ to 5★, both overall and for those in similar-shot groups. The counts update live as thresholds move, and nothing is written until the user presses Rate & Mark:
 
 | Counts (this scan) | 1★ | 2★ | 3★ | 4★ | 5★ |
 | --- | --- | --- | --- | --- | --- |
@@ -263,7 +264,7 @@ The scan's groups stay in memory until Rate & Mark uses them. If the app quits b
 
 Before running, a summary sheet shows the counts, e.g. "Clear the ratings of 1,445 photos and remove them from 2 albums?", with Cancel and Revert buttons. Ratings outside the albums, mostly 3★–5★, are left as they are; to change them, scan their date range again.
 
-**Why no Ollama.** Vision's aesthetics model is built for this, runs on the Neural Engine and gives consistent scores. A local vision LLM would be far slower per image, use a lot of RAM, and produce scores that are hard to calibrate across tens of thousands of photos. Vision aesthetics is a Vision framework feature, not Apple Intelligence, so it should work in the user's region; Phase 0 confirms this on the user's Mac.
+**Why no Ollama.** Vision's aesthetics model is built for this, runs on the Neural Engine and gives consistent scores. A local vision LLM would be far slower per image, use a lot of RAM, and produce scores that are hard to calibrate across tens of thousands of photos. Vision aesthetics is a Vision framework feature, not Apple Intelligence, and Phase 0 confirmed it works in the user's region.
 
 ## Data model
 
@@ -353,16 +354,18 @@ The rule throughout: a failure skips the affected item and is logged; only condi
 
 Before building features, a throwaway spike target answers these questions on the user's Mac and library. Each answer is recorded in `docs/spikes.md`, and the spec is updated where the answer changes the design.
 
-- [ ] **Rating write prompts.** Does setting `rating` on existing assets trigger a system "allow modify" prompt on macOS? If so, once per `performChanges` or per asset? This decides the batch sizes for Export & Mark, Rate & Mark and Revert.
-- [ ] **Shared Library in albums.** Can Shared Library assets be added to and removed from a personal album via PhotoKit?
-- [ ] **EXIF read cost.** On 200 iCloud-only photos, measure bytes downloaded and time for the header-only EXIF read (stream, then cancel) against a full original download. Record the share of the library that is iCloud-only, and the share of photos with no `Make`/`Model`.
-- [ ] **Vision aesthetics availability.** Run `CalculateImageAestheticsScoresRequest` on 20 photos under the user's account and region. Record the score range seen.
-- [ ] **Similarity calibration.** Histogram of nearest-neighbor distances within 30 s on about 2,000 photos, plus sample pairs per distance band. Pick the single distance threshold and record the feature-print revision to pin. Also check that the 30 s window catches the user's typical retakes.
-- [ ] **dataSize and progress.** Is `PHAssetResource.dataSize` populated for iCloud-only assets? Does the `requestData` progress handler fire during downloads?
-- [ ] **Rating API details.** Xcode 27 beta headers show `rating` read-only on `PHAsset` and read-write on `PHAssetChangeRequest` (macOS 27), and `PHAssetResource.filename` replacing the deprecated `originalFilename`. Still open: exact `PHAsset.Rating` case names, and whether `rating` works in a fetch predicate or filtering must be done in memory. `dataSize` didn't appear in the header diffs, so confirm it too.
-- [ ] **Album ids.** Confirm albums are still found by `localIdentifier` after the user renames them in Photos.
-- [ ] **Shared metadata (informational).** Do ratings on Shared Library assets sync to other participants? If yes, say so on the Photos mode pages.
-- [ ] **QuickTime dates.** Read `quickTimeMetadataCreationDate` from 10 iPhone videos recorded in different time zones and confirm the offset is present.
+All answered in `docs/spikes.md` (Phase 0, 2026-11-03):
+
+- [x] **Rating write prompts.** No system prompt when writing ratings, in one batch or per photo; a write takes about 0.02 s.
+- [x] **Shared Library in albums.** Shared Library photos can be added to and removed from a personal album.
+- [x] **EXIF read cost.** A full original download per iCloud-only photo, about 1–3 s; see Camera photos only.
+- [x] **Vision aesthetics availability.** Works in the user's region, about 10 ms per photo.
+- [x] **Similarity calibration.** Threshold 0.20 with feature-print `revision2`; 30 s catches retakes.
+- [x] **dataSize and progress.** `dataSize` is present for iCloud-only videos; the progress handler fires.
+- [x] **Rating API details.** `PHAsset.Rating` is `.unset`, `.one` … `.five`; `rating` works in fetch predicates (`rating == 0`, `rating >= 3`).
+- [x] **Album ids.** The album was found by `localIdentifier`; the rename itself didn't reach PhotoKit before the check, so the by-name fallback stays.
+- [ ] **Shared metadata (informational).** Not checked: no other participant's device was available.
+- [x] **QuickTime dates.** iPhone `.MOV` files carry the offset (`+0800`); app-made `.mp4` files have no embedded date.
 
 ## Implementation phases
 
@@ -427,12 +430,12 @@ Each mode has its own settings, persisted in `settings.json`. Everything else is
 
 | Constant | Value |
 | --- | --- |
-| Similar-shot distance threshold | Set in Phase 0 from calibration |
-| Chain guard | Member distance to group medoid ≤ threshold × 1.5 |
-| Similar-shot window | 30 s; a photo is compared only with photos taken within 30 s of it; confirmed in Phase 0 |
+| Similar-shot distance threshold | 0.20 (feature-print `revision2`), set in Phase 0 from calibration |
+| Chain guard | Member distance to group medoid ≤ threshold × 1.5 (0.30) |
+| Similar-shot window | 30 s; a photo is compared only with photos taken within 30 s of it |
 | Similar-shot group cap | 100 photos |
 | Video mark batch | 10 videos per `performChanges` |
-| Rating write batch (not a per-run limit) | 200 assets per `performChanges`; Phase 0 confirms it |
+| Rating write batch (not a per-run limit) | 200 assets per `performChanges`; writes raise no system prompt |
 | Concurrent analyses | 4 |
 | iCloud retry backoff | 5 s, 30 s, 120 s |
 | Stale temp file age | 24 h |

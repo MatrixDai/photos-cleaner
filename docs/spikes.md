@@ -25,7 +25,7 @@ Library at the time: 24,518 images (screenshots excluded) and 182 videos, with "
 
 | Question | Answer |
 | --- | --- |
-| `rating` in a fetch predicate | Accepted: `rating == 0`, `rating > 0` and `rating >= 3` run without an exception in 0.01 s. Every photo was unrated, so whether the predicate really filters is re-checked while the rating-writes spike has ratings set. Reading `rating` in memory for all 24,518 photos also takes 0.01 s, so in-memory filtering is a safe fallback. |
+| `rating` in a fetch predicate | Works: `rating == 0`, `rating > 0` and `rating >= 3` run in 0.01 s, and with ratings set they returned exactly the rated photos (see rating writes). Reading `rating` in memory for all 24,518 photos also takes 0.01 s, so in-memory filtering is a safe fallback. |
 | `dataSize` for iCloud-only videos | Present for all 182 videos, including the 172 iCloud-only ones, and equal to the downloaded byte count. |
 | Download progress | The progress handler fired 2–18 times per video download (2–4 MB files). |
 | QuickTime creation date | iPhone `.MOV` files carry `quickTimeMetadataCreationDate` with an offset (`2026-02-20T14:40:04+0800`). The `.mp4` files from WeChat, Android and other apps (8 of the 10 sampled) have neither that key nor `AVAsset.creationDate`, so they fall back to `PHAsset.creationDate` in the system time zone. |
@@ -33,12 +33,16 @@ Library at the time: 24,518 images (screenshots excluded) and 182 videos, with "
 | Vision aesthetics | Works under the user's account and region (`revision1`), about 10 ms per photo. Scores on 20 photos from 1999–2007 ranged 0.32–0.80 (median 0.47); one was flagged `isUtility`. Fetching the 1024 px derivative took under 0.1 s even for iCloud-only photos, because Photos keeps previews locally. With the default thresholds (−0.3 / 0.0 / 0.3 / 0.6) most of these would be 4★, so Phase 3 should expect to retune them. |
 | Similarity threshold | Feature-print `revision2`. Of 2,000 oldest photos, 1,679 sat in 381 sequences of two or more within 30 s. Nearest-neighbour distance: median 0.15, p90 0.40. The user reviewed the sample pairs and chose **0.20** as the threshold; the chain guard then allows 0.30 to the group's medoid. |
 | 30 s window catches retakes | Yes: 84% of photos in the sample had a neighbour within 30 s, and the user confirmed the pairs below 0.20 are retakes. |
-| Rating write prompts | _pending: the first run crashed before writing (fixed)_ |
-| Shared Library assets in a personal album | _pending_ |
-| Album found by `localIdentifier` after rename | _pending_ |
-| Ratings on Shared Library assets sync to other participants (informational) | _pending_ |
+| Rating write prompts | None. Writing ratings to 3 photos in one `performChanges` and to 3 photos in three separate calls raised no system prompt, and each write took about 0.02 s, so a 200-asset batch is fine. Deleting an album does raise a Photos confirmation; the app never deletes albums. |
+| Shared Library assets in a personal album | Yes. All 50 of the newest photos were added, including Shared Library photos (seen with the Shared Library badge in the album), and all 50 were removed again. The album syncs to the user's other devices. |
+| Album found by `localIdentifier` after rename | Found by `localIdentifier`, but the check still read the original title, so the rename hadn't reached PhotoKit when it ran. The spec keeps the by-name lookup as a fallback. |
+| Ratings on Shared Library assets sync to other participants (informational) | Not checked: no other participant's device was available. The rating predicate was also confirmed while ratings were set: `rating >= 3` returned 6 and `rating == 4` returned 3, as expected. |
 
 ## Lessons for the app
 
 - **Write blocks must not be main-actor isolated.** A `performChanges` block written inside `@MainActor` code is treated as main-actor only, and PhotoKit runs it on its own queue, so Swift 6 stops the app with `dispatch_assert_queue_fail`. The compiler doesn't catch it, because PhotoKit's callbacks aren't annotated `@Sendable`. Route every `performChanges` through a nonisolated helper that takes an `@Sendable` block, as `Library.change` does in the spike.
 - **The EXIF check is the expensive step** for an iCloud-only library: about one original download per photo, roughly 1–3 s each, and Photos may keep the downloaded originals on disk until it evicts them.
+
+## Spec amendments
+
+Applied to `docs/spec.md`: the Photos entitlement for Hardened Runtime; nonisolated write blocks; the real cost of the EXIF check; `rating == 0` and `resumeAfter` in the older-than fetch; the similarity threshold 0.20 and chain guard 0.30; the aesthetics score range seen; and the missing dates in app-made `.mp4` files.
