@@ -30,21 +30,24 @@ struct RootView: View {
 
     var body: some View {
         if model.hasFullAccess {
-            NavigationSplitView {
-                List(selection: Binding(get: { page }, set: { page = $0 ?? .videos })) {
-                    Section("Videos") { row(.videos) }
-                    Section("Photos") { row(.photos) }
-                    Section("App") { row(.activity) }
+            VStack(spacing: 0) {
+                NavigationSplitView {
+                    List(selection: Binding(get: { page }, set: { page = $0 ?? .videos })) {
+                        Section("Videos") { row(.videos) }
+                        Section("Photos") { row(.photos) }
+                        Section("App") { row(.activity) }
+                    }
+                    .navigationSplitViewColumnWidth(min: 180, ideal: 200)
+                } detail: {
+                    switch page {
+                    case .videos: VideoPage(model: model)
+                    case .photos: PhotoPage(model: model)
+                    case .activity: ActivityView(model: model)
+                    }
                 }
-                .navigationSplitViewColumnWidth(min: 180, ideal: 200)
-            } detail: {
-                switch page {
-                case .videos: VideoPage(model: model)
-                case .photos: PhotoPage(model: model)
-                case .activity: ActivityView(model: model)
-                }
+                Divider()
+                StatusBar(model: model, page: page)
             }
-            .safeAreaInset(edge: .bottom, spacing: 0) { StatusBar(model: model, page: page) }
         } else {
             AccessBlockedView(model: model)
         }
