@@ -7,8 +7,6 @@ struct VideoPage: View {
     @State private var confirmingFreeSpace = false
 
     private var videos: VideoModel { model.videos }
-    private var settings: VideoSettings { model.settings.settings.videos }
-
     var body: some View {
         VStack(spacing: 0) {
             VideoSettingsView(model: model)
@@ -44,75 +42,21 @@ struct VideoPage: View {
 
 private struct VideoSettingsView: View {
     let model: AppModel
-    @State private var albumName = ""
-
-    private var settings: VideoSettings { model.settings.settings.videos }
 
     var body: some View {
-        Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 12, verticalSpacing: 10) {
-            GridRow {
-                Text("Export folder").gridColumnAlignment(.trailing)
-                HStack {
-                    Text(model.videos.folder.path).lineLimit(1).truncationMode(.middle).textSelection(.enabled)
-                    FolderBadge(state: model.videos.folderState)
-                    Button("Choose…", action: choose)
-                    Button("Reveal in Finder") { NSWorkspace.shared.activateFileViewerSelecting([model.videos.folder]) }
-                        .disabled(model.videos.folderState == .willBeCreated)
-                }
-            }
-            GridRow {
-                Text("Older than")
-                HStack {
-                    TextField("", value: binding(\.olderThanDays, range: VideoSettings.olderThanDaysRange), format: .number)
-                        .frame(width: 70)
-                    Stepper("days", value: binding(\.olderThanDays, range: VideoSettings.olderThanDaysRange),
-                            in: VideoSettings.olderThanDaysRange)
-                }
-            }
-            GridRow {
-                Text("File name")
-                VStack(alignment: .leading, spacing: 4) {
-                    TextField(NamingEngine.defaultTemplate, text: binding(\.nameTemplate)).frame(maxWidth: 420)
-                    Text("Preview: \(NamingEngine.render(settings.nameTemplate, day: "2026-02-28", filename: "IMG_0579.MOV"))  ·  tokens: \(NamingEngine.tokens.joined(separator: " "))")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
-            }
-            GridRow {
-                Text("Parallel exports")
-                Picker("", selection: binding(\.parallelExports)) {
-                    ForEach(VideoSettings.parallelExportsRange, id: \.self) { Text("\($0)").tag($0) }
-                }
-                .pickerStyle(.segmented).frame(width: 180).labelsHidden()
-            }
-            GridRow {
-                Text("Album")
-                TextField("video-to-delete", text: $albumName)
-                    .frame(width: 220)
-                    .onSubmit { Task { await model.renameAlbum(.videoToDelete, to: albumName) } }
-                    .onAppear { albumName = settings.album.name }
-            }
+        HStack {
+            Text("Older than")
+            TextField("", value: days, format: .number).frame(width: 70)
+            Stepper("days", value: days, in: VideoSettings.olderThanDaysRange)
+            Spacer()
         }
         .disabled(model.jobs.isBusy)
     }
 
-    private func binding<Value>(_ keyPath: WritableKeyPath<VideoSettings, Value>) -> Binding<Value> {
-        Binding(get: { model.settings.settings.videos[keyPath: keyPath] },
-                set: { value in model.settings.update { $0.videos[keyPath: keyPath] = value } })
-    }
-
-    private func binding(_ keyPath: WritableKeyPath<VideoSettings, Int>, range: ClosedRange<Int>) -> Binding<Int> {
-        Binding(get: { model.settings.settings.videos[keyPath: keyPath] },
-                set: { value in model.settings.update { $0.videos[keyPath: keyPath] = min(max(value, range.lowerBound), range.upperBound) } })
-    }
-
-    private func choose() {
-        let panel = NSOpenPanel()
-        panel.canChooseDirectories = true
-        panel.canChooseFiles = false
-        panel.canCreateDirectories = true
-        panel.directoryURL = model.videos.folder
-        panel.prompt = "Use Folder"
-        if panel.runModal() == .OK, let url = panel.url { model.videos.chooseFolder(url) }
+    private var days: Binding<Int> {
+        let range = VideoSettings.olderThanDaysRange
+        return Binding(get: { model.settings.settings.videos.olderThanDays },
+                       set: { value in model.settings.update { $0.videos.olderThanDays = min(max(value, range.lowerBound), range.upperBound) } })
     }
 }
 

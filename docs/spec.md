@@ -110,7 +110,7 @@ These rules hold regardless of settings, and each one has a unit test.
 
 ## UI layout and settings
 
-The window is a `NavigationSplitView` with three pages: Videos, Photos and Activity. Each mode lives on one page: its settings at the top, results in the middle, and an action bar (Scan, Run, Revert…, progress, Cancel) at the bottom. Videos mode has no Revert. Review happens in Photos itself, so there are no in-app review pages and no separate Settings window.
+The window is a `NavigationSplitView` with four pages: Videos, Photos, Activity and Settings. Each mode lives on one page: only its scope at the top, results in the middle, and an action bar (Scan, Run, Revert…, progress, Cancel) at the bottom. Every other setting, for both modes, is on the Settings page. Videos mode has no Revert. Review happens in Photos itself, so there are no in-app review pages. The status bar sits below the split view, never over a page.
 
 ```
 ┌──────────────────┬───────────────────────────────────────────────────────────┐
@@ -119,10 +119,10 @@ The window is a `NavigationSplitView` with three pages: Videos, Photos and Activ
 │   Cleanup        │ │ (•) Older than [ 90 ] days  ( ) Taken [2015-01-01]–[…]│ │
 │ PHOTOS           │ │ ⓘ A date range re-rates every photo in it             │ │
 │ ▸ Rating &       │ └───────────────────────────────────────────────────────┘ │
-│   Similar Shots  │ ▸ Settings (thresholds, camera photos per run, albums)    │
+│   Similar Shots  │                                                           │
 │ APP              │ ┌ Results ──────────────────────────────────────────────┐ │
 │   Activity       │ │ Score histogram with 4 thresholds                     │ │
-│                  │ │ 1★ 412 · 2★ 1,033 · 3★ 4,870 · 4★ 2,240 · 5★ 1,445    │ │
+│   Settings       │ │ 1★ 412 · 2★ 1,033 · 3★ 4,870 · 4★ 2,240 · 5★ 1,445    │ │
 │                  │ │ Similar: 318 groups · 1★96 2★210 3★402 4★300 5★96     │ │
 │                  │ └───────────────────────────────────────────────────────┘ │
 │                  │ [Scan] [Rate & Mark] [Revert…] ██░░ 3,800/10,000 [Cancel] │
@@ -133,9 +133,10 @@ The window is a `NavigationSplitView` with three pages: Videos, Photos and Activ
 
 Pages:
 
-- **Videos · Export & Cleanup:** a Settings group (export folder with Choose…, Reveal in Finder and writable badge; older than N days; file name template with live preview; parallel exports; album name), a results table (date, name, size, status, file) and the action bar: Scan, Export & Mark N, progress, Cancel.
-- **Photos · Rating & Similar Shots:** a Scope group (older than N days, or a from–to date range with a hint that it re-rates every photo in it), a collapsible Settings group (star thresholds, camera photos per run, album names), results (histogram, a per-star count table (1★–5★) for this scan's photos and for those in similar-shot groups, plus the similar-shot group count and a preview grid shown before anything is written) and the action bar: Scan, Rate & Mark N, Revert…, progress, Cancel.
-- **Activity:** the run log, an album summary (each app album's current size and the change since the last run, e.g. "video-to-delete: 12 videos, 38 fewer than after the last run"), the data folder with Reveal in Finder, and Reset all settings.
+- **Videos · Export & Cleanup:** older than N days, a results table (date, name, size, status, file) and the action bar: Scan, Export & Mark N, progress, Cancel.
+- **Photos · Rating & Similar Shots:** a Scope group (older than N days, or a from–to date range with a hint that it re-rates every photo in it), results (histogram, a per-star count table (1★–5★) for this scan's photos and for those in similar-shot groups, plus the similar-shot group count and a preview grid shown before anything is written) and the action bar: Scan, Rate & Mark N, Revert…, progress, Cancel.
+- **Activity:** the run log, an album summary (each app album's current size and the change since the last run, e.g. "video-to-delete: 12 videos, 38 fewer than after the last run").
+- **Settings:** a Videos section (export folder with Choose…, Reveal in Finder and writable badge; file name template with live preview; parallel exports; album name), a Photos section (camera photos per run, star thresholds, the two album names) and a Data section (the data folder with Reveal in Finder, and Reset all settings).
 
 **Busy state.** While a job runs, the status bar shows the busy mode and progress on every page. Scan, Export, Rate and Revert buttons in both modes are disabled until it finishes or is cancelled. Switching pages during a job is allowed.
 
@@ -156,7 +157,7 @@ Persistence:
 
 Videos mode exports every video older than N days (default 90) to `<exportDir>/<yyyy>/<yyyy-MM-dd> <original name>`, verifies each file, keeps only one local copy of identical content, then adds the video to `video-to-delete`. The app never rates videos; it only respects stars the user set, where 3★ or higher means keep.
 
-**Settings** (top of the Export & Cleanup page): export folder, older than N days, file name template, parallel exports (1–4, default 2), album name.
+**Settings:** older than N days on the Export & Cleanup page; export folder, file name template, parallel exports (1–4, default 2) and album name on the Settings page.
 
 **Fixed behavior:** favorites are included, hidden videos are excluded, videos the user rated 3★ or higher are skipped entirely (not exported, not marked, and removed from video-to-delete if already there), edited versions are always exported alongside the original, and the file date is always the capture date.
 
@@ -187,10 +188,10 @@ Every Export & Mark also removes from `video-to-delete` each video the user has 
 
 Photos mode rates camera photos in a chosen scope 1★–5★ with one rule — four star thresholds — and adds every 1★–2★ photo that isn't part of a similar-shot group to `photo-low-quality`. It also groups similar shots taken close together and adds them, whatever their stars, only to `photo-duplicated`. It never exports or deletes photos, and no LLM is involved.
 
-**Settings** (top of the Rating & Similar Shots page):
+**Settings:**
 
-- **Scope:** older than N days (default 90), or taken between a start and end date.
-- **Star thresholds**, **Camera photos per run** (default 10,000), and the two album names.
+- **Scope**, on the Rating & Similar Shots page: older than N days (default 90), or taken between a start and end date.
+- On the Settings page: **Star thresholds**, **Camera photos per run** (default 10,000), and the two album names. The histogram's draggable thresholds edit the same values.
 
 **Scope** (`PhotoScope`). Image assets only; hidden photos excluded, favorites included. The two scope kinds select photos differently:
 

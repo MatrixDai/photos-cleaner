@@ -55,7 +55,7 @@ public struct LibraryVideo: Equatable, Sendable, Identifiable {
 public enum AlbumRole: String, CaseIterable, Sendable {
     case videoToDelete, photoLowQuality, photoDuplicated
 
-    var keyPath: WritableKeyPath<AppSettings, AlbumRef> {
+    public var keyPath: WritableKeyPath<AppSettings, AlbumRef> {
         switch self {
         case .videoToDelete: \.videos.album
         case .photoLowQuality: \.photos.albums.lowQuality

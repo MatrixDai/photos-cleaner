@@ -3,7 +3,7 @@ import CleanerCore
 import SwiftUI
 
 enum Page: String, CaseIterable, Identifiable {
-    case videos, photos, activity
+    case videos, photos, activity, settings
 
     var id: String { rawValue }
 
@@ -12,6 +12,7 @@ enum Page: String, CaseIterable, Identifiable {
         case .videos: "Export & Cleanup"
         case .photos: "Rating & Similar Shots"
         case .activity: "Activity"
+        case .settings: "Settings"
         }
     }
 
@@ -20,6 +21,7 @@ enum Page: String, CaseIterable, Identifiable {
         case .videos: "video"
         case .photos: "photo.stack"
         case .activity: "list.bullet.rectangle"
+        case .settings: "gearshape"
         }
     }
 }
@@ -35,7 +37,10 @@ struct RootView: View {
                     List(selection: Binding(get: { page }, set: { page = $0 ?? .videos })) {
                         Section("Videos") { row(.videos) }
                         Section("Photos") { row(.photos) }
-                        Section("App") { row(.activity) }
+                        Section("App") {
+                            row(.activity)
+                            row(.settings)
+                        }
                     }
                     .navigationSplitViewColumnWidth(min: 180, ideal: 200)
                 } detail: {
@@ -43,6 +48,7 @@ struct RootView: View {
                     case .videos: VideoPage(model: model)
                     case .photos: PhotoPage(model: model)
                     case .activity: ActivityView(model: model)
+                    case .settings: SettingsPage(model: model)
                     }
                 }
                 Divider()
@@ -98,7 +104,7 @@ struct StatusBar: View {
         case .photos:
             model.settings.settings.photos.resumeAfter.map { "Continuing after \($0.formatted(date: .abbreviated, time: .omitted))" }
                 ?? "Starting from the oldest photo"
-        case .activity:
+        case .activity, .settings:
             "Data folder: \(model.dataDirectory.path)"
         }
     }
