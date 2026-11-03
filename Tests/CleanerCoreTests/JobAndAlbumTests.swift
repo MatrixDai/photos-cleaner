@@ -22,9 +22,9 @@ struct AlbumServiceTests {
 
     @Test func missingAlbumIsCreated() async throws {
         let library = FakeLibrary()
-        let resolved = try await AlbumService(library: library).resolve(AlbumRef(name: "photo-low-quality"))
-        #expect(library.createdNames == ["photo-low-quality"])
-        #expect(resolved.id.flatMap { library.albums[$0]?.title } == "photo-low-quality")
+        let resolved = try await AlbumService(library: library).resolve(AlbumRef(name: "photo-duplicated"))
+        #expect(library.createdNames == ["photo-duplicated"])
+        #expect(resolved.id.flatMap { library.albums[$0]?.title } == "photo-duplicated")
     }
 }
 
@@ -107,14 +107,14 @@ struct AppModelTests {
         try AppModel(dataDirectory: dir, library: library, keepAwake: FakeKeepAwake(), settingsDebounce: .milliseconds(1))
     }
 
-    @Test func launchRequestsAccessThenCreatesTheThreeAlbums() async throws {
+    @Test func launchRequestsAccessThenCreatesTheTwoAlbums() async throws {
         let library = FakeLibrary(status: .notDetermined, grantOnRequest: .authorized)
         let model = try model(library)
         await model.launch()
         #expect(model.hasFullAccess)
-        #expect(Set(library.createdNames) == ["video-to-delete", "photo-low-quality", "photo-duplicated"])
+        #expect(Set(library.createdNames) == ["video-to-delete", "photo-duplicated"])
         let stored = model.settings.settings
-        for ref in [stored.videos.album, stored.photos.albums.lowQuality, stored.photos.albums.duplicated] {
+        for ref in [stored.videos.album, stored.photos.albums.duplicated] {
             #expect(ref.id.flatMap { library.albums[$0]?.title } == ref.name)
         }
     }
@@ -135,7 +135,7 @@ struct AppModelTests {
         library.setStatus(.authorized)
         await model.checkAccessAgain()
         #expect(model.hasFullAccess)
-        #expect(library.createdNames.count == 3)
+        #expect(library.createdNames.count == 2)
     }
 
     @Test func relaunchFindsAlbumsByIDEvenAfterRename() async throws {
@@ -149,7 +149,7 @@ struct AppModelTests {
 
         let second = try model(library, dir: dir)
         await second.launch()
-        #expect(library.createdNames.count == 3)
+        #expect(library.createdNames.count == 2)
         #expect(second.settings.settings.videos.album.id == id)
     }
 
@@ -206,7 +206,7 @@ struct AppModelTests {
         await model.resetAllSettings()
         #expect(model.settings.settings.videos.olderThanDays == 90)
         #expect(model.settings.settings.videos.album.id != nil)
-        #expect(library.createdNames.count == 3)
+        #expect(library.createdNames.count == 2)
     }
 }
 

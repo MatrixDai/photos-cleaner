@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 
 public enum LibraryAuthorization: Sendable, Equatable {
@@ -17,6 +18,44 @@ public protocol PhotoLibraryService: Sendable {
     func removeAssets(_ ids: [String], fromAlbum albumID: String) async throws
     func videos(createdBefore cutoff: Date) async -> [LibraryVideo]
     func resourceData(assetID: String, kind: LibraryVideoResource.Kind) -> AsyncThrowingStream<Data, any Error>
+    func photos(_ query: PhotoQuery) async -> [LibraryPhoto]
+    func ratings(of ids: [String]) async -> [String: Int]
+    func setRatings(_ ratings: [String: Int]) async throws
+    func image(for photoID: String, side: Int) async -> CGImage?
+}
+
+public struct PhotoQuery: Equatable, Sendable {
+    public var lowerBound: Date?
+    public var lowerInclusive: Bool
+    public var upperBound: Date
+    public var unratedOnly: Bool
+
+    public init(lowerBound: Date?, lowerInclusive: Bool, upperBound: Date, unratedOnly: Bool) {
+        self.lowerBound = lowerBound
+        self.lowerInclusive = lowerInclusive
+        self.upperBound = upperBound
+        self.unratedOnly = unratedOnly
+    }
+
+    public func contains(_ date: Date) -> Bool {
+        guard date < upperBound else { return false }
+        guard let lowerBound else { return true }
+        return lowerInclusive ? date >= lowerBound : date > lowerBound
+    }
+}
+
+public struct LibraryPhoto: Equatable, Sendable, Identifiable {
+    public var id: String
+    public var creationDate: Date?
+    public var rating: Int
+    public var isScreenshot: Bool
+
+    public init(id: String, creationDate: Date?, rating: Int, isScreenshot: Bool) {
+        self.id = id
+        self.creationDate = creationDate
+        self.rating = rating
+        self.isScreenshot = isScreenshot
+    }
 }
 
 public struct LibraryVideoResource: Equatable, Sendable {
@@ -53,12 +92,11 @@ public struct LibraryVideo: Equatable, Sendable, Identifiable {
 }
 
 public enum AlbumRole: String, CaseIterable, Sendable {
-    case videoToDelete, photoLowQuality, photoDuplicated
+    case videoToDelete, photoDuplicated
 
     public var keyPath: WritableKeyPath<AppSettings, AlbumRef> {
         switch self {
         case .videoToDelete: \.videos.album
-        case .photoLowQuality: \.photos.albums.lowQuality
         case .photoDuplicated: \.photos.albums.duplicated
         }
     }
