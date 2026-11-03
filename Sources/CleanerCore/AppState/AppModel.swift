@@ -20,6 +20,7 @@ public struct AlbumSummaryRow: Equatable, Sendable, Identifiable {
 public final class AppModel {
     public let settings: SettingsStore
     public let jobs: JobCenter
+    public let videos: VideoModel
     public let dataDirectory: URL
     public private(set) var authorization: LibraryAuthorization
     public private(set) var albumError: String?
@@ -30,12 +31,13 @@ public final class AppModel {
     @ObservationIgnored private let runLog: RunLog
 
     public init(dataDirectory: URL, library: any PhotoLibraryService, keepAwake: any KeepAwake = ProcessKeepAwake(),
-                settingsDebounce: Duration = .milliseconds(500)) throws {
+                settingsDebounce: Duration = .milliseconds(500), exporter: VideoExporter? = nil) throws {
         self.dataDirectory = dataDirectory
         self.library = library
         settings = try SettingsStore(directory: dataDirectory, debounce: settingsDebounce)
         runLog = RunLog(fileURL: dataDirectory.appending(path: "runs.jsonl"))
         jobs = JobCenter(runner: JobRunner(runLog: runLog, keepAwake: keepAwake))
+        videos = VideoModel(settings: settings, jobs: jobs, exporter: exporter ?? VideoExporter(library: library))
         authorization = library.authorization()
         jobs.albumSnapshot = { [weak self] in await self?.albumSizes() ?? [:] }
         jobs.onFinish = { [weak self] _ in Task { await self?.refreshActivity() } }
@@ -64,6 +66,13 @@ public final class AppModel {
         await ensureAlbums()
     }
 
+    public func renameAlbum(_ role: AlbumRole, to name: String) async {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed != settings.settings[keyPath: role.keyPath].name else { return }
+        settings.update { $0[keyPath: role.keyPath] = AlbumRef(name: trimmed) }
+        await ensureAlbums()
+    }
+
     public func refreshActivity() async {
         runs = await runLog.records().reversed()
         let sizes = await albumSizes()
@@ -76,6 +85,7 @@ public final class AppModel {
 
     private func afterAccessCheck() async {
         guard hasFullAccess else { return }
+        videos.launch()
         await ensureAlbums()
         await refreshActivity()
     }

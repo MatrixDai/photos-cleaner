@@ -47,6 +47,74 @@ public struct LivePhotoLibrary: PhotoLibraryService {
         return PHAsset.fetchAssets(in: album, options: nil).count
     }
 
+    public func albumMembers(id: String) async -> Set<String> {
+        guard let album = PHAssetCollection.fetchAssetCollections(withLocalIdentifiers: [id], options: nil).firstObject else {
+            return []
+        }
+        var members = Set<String>()
+        PHAsset.fetchAssets(in: album, options: nil).enumerateObjects { asset, _, _ in members.insert(asset.localIdentifier) }
+        return members
+    }
+
+    public func addAssets(_ ids: [String], toAlbum albumID: String) async throws {
+        try await Self.change {
+            guard let album = PHAssetCollection.fetchAssetCollections(withLocalIdentifiers: [albumID], options: nil).firstObject else { return }
+            PHAssetCollectionChangeRequest(for: album)?.addAssets(PHAsset.fetchAssets(withLocalIdentifiers: ids, options: nil))
+        }
+    }
+
+    public func removeAssets(_ ids: [String], fromAlbum albumID: String) async throws {
+        try await Self.change {
+            guard let album = PHAssetCollection.fetchAssetCollections(withLocalIdentifiers: [albumID], options: nil).firstObject else { return }
+            PHAssetCollectionChangeRequest(for: album)?.removeAssets(PHAsset.fetchAssets(withLocalIdentifiers: ids, options: nil))
+        }
+    }
+
+    public func videos(createdBefore cutoff: Date) async -> [LibraryVideo] {
+        let options = PHFetchOptions()
+        options.includeHiddenAssets = false
+        options.predicate = NSPredicate(format: "mediaType == %d AND creationDate < %@", PHAssetMediaType.video.rawValue, cutoff as NSDate)
+        options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: true)]
+        var videos: [LibraryVideo] = []
+        PHAsset.fetchAssets(with: options).enumerateObjects { asset, _, _ in
+            let resources = PHAssetResource.assetResources(for: asset).compactMap { resource -> LibraryVideoResource? in
+                guard let kind = Self.kind(of: resource.type) else { return nil }
+                return LibraryVideoResource(kind: kind, filename: resource.filename, size: resource.dataSize)
+            }
+            videos.append(LibraryVideo(id: asset.localIdentifier, creationDate: asset.creationDate,
+                                       rating: asset.rating.rawValue, resources: resources))
+        }
+        return videos
+    }
+
+    public func resourceData(assetID: String, kind: LibraryVideoResource.Kind) -> AsyncThrowingStream<Data, any Error> {
+        AsyncThrowingStream { continuation in
+            guard let asset = PHAsset.fetchAssets(withLocalIdentifiers: [assetID], options: nil).firstObject,
+                  let resource = PHAssetResource.assetResources(for: asset).first(where: { Self.kind(of: $0.type) == kind }) else {
+                continuation.finish(throwing: CocoaError(.fileNoSuchFile))
+                return
+            }
+            let options = PHAssetResourceRequestOptions()
+            options.isNetworkAccessAllowed = true
+            let request = PHAssetResourceManager.default().requestData(for: resource, options: options, dataReceivedHandler: { chunk in
+                continuation.yield(chunk)
+            }, completionHandler: { error in
+                continuation.finish(throwing: error)
+            })
+            continuation.onTermination = { termination in
+                if case .cancelled = termination { PHAssetResourceManager.default().cancelDataRequest(request) }
+            }
+        }
+    }
+
+    private static func kind(of type: PHAssetResourceType) -> LibraryVideoResource.Kind? {
+        switch type {
+        case .video: .original
+        case .fullSizeVideo: .edited
+        default: nil
+        }
+    }
+
     /// PhotoKit runs the block on its own queue; a block that inherited main-actor isolation would trap there.
     static func change(_ block: @escaping @Sendable () -> Void) async throws {
         try await PHPhotoLibrary.shared().performChanges(block)

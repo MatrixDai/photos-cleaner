@@ -143,7 +143,7 @@ Pages:
 
 **Status bar,** from left: Photos authorization, busy state (with "Keeping Mac awake" while a job runs), then mode-specific detail. On Videos pages that's the export folder's writable state and free space (from `volumeAvailableCapacityForImportantUsageKey`, falling back to `volumeAvailableCapacityKey`, hidden if neither is available). On Photos pages it's where older-than mode will continue from. Export & Mark warns when the planned size exceeds free space.
 
-**Writable check.** It runs at launch, when the export folder changes and before each export job. It creates `.photoscleaner-write-test-<uuid>` in the folder, writes 1 byte, reads it back and deletes it. It doesn't inspect the filesystem type.
+**Writable check.** It runs at launch, when the export folder changes and before each export job. A folder that doesn't exist yet, such as the default `~/Downloads/PhotosCleaner/Videos`, isn't an error: the page shows "Created on first export", and Export & Mark creates it just before its own check. It creates `.photoscleaner-write-test-<uuid>` in the folder, writes 1 byte, reads it back and deletes it. It doesn't inspect the filesystem type.
 
 Persistence:
 
@@ -172,7 +172,7 @@ Videos mode exports every video older than N days (default 90) to `<exportDir>/<
 4. **Resolve the capture date** (`CaptureDateResolver`). iPhone `.MOV` files carry the date below; `.mp4` files from chat and Android apps usually carry neither it nor `AVAsset.creationDate`, so they take the last fallback. Read `AVMetadataIdentifier.quickTimeMetadataCreationDate` from the temp file. It's an ISO 8601 string with a UTC offset (e.g. `2026-02-28T23:14:05+0800`). Format `yyyy-MM-dd` in that offset's time zone, so the date is the local date where the video was recorded. Fallbacks, in order: `AVAsset.creationDate`, then `PHAsset.creationDate` in the system time zone. Record which source was used.
 5. **Build the name** (`NamingEngine`). The default template is `{yyyy}/{yyyy}-{MM}-{dd} {filename}`. Tokens: `{yyyy} {MM} {dd} {filename} {basename} {ext}`. The filename comes from `PHAssetResource.filename`. Replace `/` and `:` with `_`, normalize to Unicode NFC (the files will be read on Linux) and trim whitespace.
 6. **Handle name collisions.** If the target path exists, its content is different (identical content was caught in step 3), so try ` (2)`, ` (3)` and so on before the extension, e.g. `2026-02-28 IMG_0001 (2).MOV`. Never overwrite.
-7. **Move into place.** Create the year folder if needed, then `FileManager.moveItem` from temp to the final path. Both are on the same volume, so the rename is atomic. Add the file to the index.
+7. **Move into place.** If the export folder itself has vanished, stop: recreating it would write onto the boot disk when an external volume was unmounted. Otherwise create the year folder if needed, then `FileManager.moveItem` from temp to the final path. Both are on the same volume, so the rename is atomic. Add the file to the index.
 8. **Verify.** Re-read the final file, compute SHA-256 and compare it with the write-time hash. Also check the size against `dataSize` when that's available. On mismatch, delete the final file and mark the video `failed`.
 
 **Mark.** A video is marked once all its resources are verified, whether written or already local. Marks are written during the job in batches of 10 videos, and the pending batch is written before Cancel stops, so a crash leaves at most 10 verified videos unmarked. The next run downloads those again, finds them already local, and marks them without a second copy.
@@ -329,7 +329,8 @@ The rule throughout: a failure skips the affected item and is logged; only condi
 | Both | App album renamed or deleted in Photos | Find by stored id, then by name, else recreate |
 | Both | User removes an app-marked item from its album in Photos | Not remembered; the next run may add it back. To keep a photo or video, rate it 3★ or higher |
 | Videos | Export folder not writable at job start | Block the job; show a ✗ badge with the error text |
-| Videos | Folder disappears mid-job (unmount, network drop) | Abort after writing the pending mark batch; the current temp file is left for cleanup |
+| Videos | Folder disappears mid-job (unmount, network drop) | Abort after writing the pending mark batch, without recreating the folder; the current temp file is left for cleanup |
+| Videos | Export folder doesn't exist yet | Shown as "Created on first export"; Export & Mark creates it |
 | Videos | Disk full during write | Abort, delete the current temp file, show the free-space figure |
 | Videos | iCloud download fails or times out | Retry 3× (5 s, 30 s, 120 s), then mark `failed` and continue |
 | Videos | Downloaded video identical to an existing local file | Discard the new copy, count the existing file, show `already local` |

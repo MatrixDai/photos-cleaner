@@ -8,6 +8,6 @@ let package = Package(
     targets: [
         .target(name: "CleanerCore"),
         .executableTarget(name: "PhotosCleaner", dependencies: ["CleanerCore"]),
-        .testTarget(name: "CleanerCoreTests", dependencies: ["CleanerCore"]),
+        .testTarget(name: "CleanerCoreTests", dependencies: ["CleanerCore"], resources: [.copy("Fixtures")]),
     ]
 )

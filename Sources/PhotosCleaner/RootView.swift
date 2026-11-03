@@ -80,10 +80,18 @@ struct StatusBar: View {
         .background(.bar)
     }
 
+    private var folderState: String {
+        switch model.videos.folderState {
+        case .writable: "writable ✓"
+        case .willBeCreated: "will be created on first export"
+        case .notWritable(let reason): "✗ \(reason)"
+        }
+    }
+
     private var detail: String {
         switch page {
         case .videos:
-            "Export folder: \(model.settings.settings.videos.exportDir.path)"
+            "Export folder \(folderState) · \(model.videos.freeSpace.map { bytes($0) + " free" } ?? "free space unknown")"
         case .photos:
             model.settings.settings.photos.resumeAfter.map { "Continuing after \($0.formatted(date: .abbreviated, time: .omitted))" }
                 ?? "Starting from the oldest photo"

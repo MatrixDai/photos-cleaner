@@ -1,16 +1,6 @@
 import CleanerCore
 import SwiftUI
 
-struct VideoPage: View {
-    let model: AppModel
-
-    var body: some View {
-        ModePage(model: model, mode: .videos, title: "Videos · Export & Cleanup",
-                 placeholder: "Export settings and results arrive in Phase 2.",
-                 actions: ["Scan", "Export & Mark"])
-    }
-}
-
 struct PhotoPage: View {
     let model: AppModel
 
@@ -51,17 +41,7 @@ private struct ActionBar: View {
                 .disabled(jobs.isBusy)
                 .help("Phase 1 placeholder: a 10-second job that only reports progress")
             Spacer()
-            if let active = jobs.active {
-                if active.mode == mode {
-                    ProgressView(value: Double(jobs.progress?.done ?? 0), total: Double(jobs.progress?.total ?? 1))
-                        .frame(width: 160)
-                    Text("\(jobs.progress?.done ?? 0)/\(jobs.progress?.total ?? 0)").monospacedDigit()
-                    Button("Cancel") { Task { await jobs.cancel() } }
-                        .keyboardShortcut(".", modifiers: .command)
-                } else {
-                    Text("\(active.mode.title) is busy").foregroundStyle(.secondary)
-                }
-            }
+            JobProgressView(jobs: jobs, mode: mode)
         }
         .padding(12)
     }
