@@ -51,36 +51,38 @@ The target is macOS 27 or later on Apple Silicon, built with Xcode 27 in Swift 6
 | App shell | SwiftUI lifecycle with a single `Window` scene (not `WindowGroup`), so only one window can exist |
 | Apple frameworks | Photos (PhotoKit), Vision, AVFoundation (QuickTime metadata), ImageIO (EXIF), CryptoKit (SHA-256) |
 | Persistence | Settings in a JSON file and the run log in a JSONL file, both through `Codable`; no third-party dependencies |
-| Signing | Not sandboxed, Hardened Runtime on with the `com.apple.security.personal-information.photos-library` entitlement (without it Hardened Runtime blocks Photos), "Sign to Run Locally" |
+| Signing | Not sandboxed, Hardened Runtime on with the `com.apple.security.personal-information.photos-library` entitlement (without it Hardened Runtime blocks Photos), signed ad hoc to run locally |
 | Info.plist | `NSPhotoLibraryUsageDescription`; request `PHAccessLevel.readWrite` |
 
 **Startup checks.** The macOS 27 and Apple Silicon requirements are enforced by the build itself: the deployment target is macOS 27 and the binary is arm64-only, so macOS refuses to launch the app anywhere else. Every rating, resource and Vision API used is therefore present at runtime, and Phase 0 confirmed the Vision requests work on the user's Mac. The one thing that can change between launches is Photos access, which the user can revoke in System Settings at any time. On each launch the app checks that `PHPhotoLibrary.authorizationStatus(for: .readWrite)` is `.authorized`, requesting it on first launch. Otherwise it shows only a blocking screen that explains why full access is needed, with Open System Settings › Privacy › Photos and Check Again buttons.
 
 ```
-PhotosCleaner/
-├─ PhotosCleaner.xcodeproj
-├─ App/
-│  ├─ PhotosCleanerApp.swift      // Window scene, dependency injection
-│  ├─ RootView.swift              // NavigationSplitView + status bar
-│  └─ Info.plist
-├─ Features/                       // SwiftUI views + @Observable models
-│  ├─ Videos/   VideoRunView, VideoSettingsView
-│  ├─ Photos/   PhotoRunView, PhotoSettingsView, GroupPreviewView
-│  └─ App/      ActivityView
-├─ Packages/CleanerCore/           // local SPM package, no SwiftUI imports
-│  ├─ Sources/CleanerCore/
-│  │  ├─ Library/      PhotoLibraryService.swift (protocol), LivePhotoLibrary.swift, AlbumService.swift
-│  │  ├─ Videos/       VideoScanner.swift, Exporter.swift, NamingEngine.swift,
-│  │  │                CaptureDateResolver.swift, LocalFileIndex.swift, Verifier.swift, WritableCheck.swift
-│  │  ├─ Photos/       PhotoScanner.swift, PhotoScope.swift, CameraOriginFilter.swift,
-│  │  │                AestheticsScorer.swift, StarRater.swift, FeaturePrinter.swift,
-│  │  │                SequenceGrouper.swift, Clusterer.swift
-│  │  ├─ Revert/       PhotoRevert.swift
-│  │  ├─ Jobs/         JobRunner.swift (actor), JobEvent.swift
-│  │  └─ Persistence/  RunLog.swift, AppSettings.swift, SettingsStore.swift
-│  └─ Tests/CleanerCoreTests/
+photos-cleaner/
+├─ Package.swift                   // one SwiftPM package; Xcode opens it directly
+├─ App/          Info.plist, PhotosCleaner.entitlements
+├─ scripts/      bundle.sh         // builds, assembles and signs build/PhotosCleaner.app
+├─ Sources/
+│  ├─ PhotosCleaner/               // SwiftUI app target
+│  │  ├─ PhotosCleanerApp.swift    // Window scene, dependency injection
+│  │  ├─ RootView.swift            // NavigationSplitView, status bar, access screen
+│  │  └─ Features/                 // VideoPage, PhotoPage, GroupPreviewView, ActivityView
+│  └─ CleanerCore/                 // library target, no SwiftUI imports
+│     ├─ AppState/     AppModel.swift (@MainActor @Observable)
+│     ├─ Library/      PhotoLibraryService.swift (protocol, AlbumService), LivePhotoLibrary.swift
+│     ├─ Videos/       VideoScanner.swift, Exporter.swift, NamingEngine.swift,
+│     │                CaptureDateResolver.swift, LocalFileIndex.swift, Verifier.swift, WritableCheck.swift
+│     ├─ Photos/       PhotoScanner.swift, PhotoScope.swift, CameraOriginFilter.swift,
+│     │                AestheticsScorer.swift, StarRater.swift, FeaturePrinter.swift,
+│     │                SequenceGrouper.swift, Clusterer.swift
+│     ├─ Revert/       PhotoRevert.swift
+│     ├─ Jobs/         JobRunner.swift (actor), JobCenter.swift, KeepAwake.swift
+│     └─ Persistence/  RunLog.swift, AppSettings.swift, SettingsStore.swift
+├─ Tests/CleanerCoreTests/
+├─ Spikes/                         // Phase 0 spike app, its own package
 └─ README.md
 ```
+
+A SwiftPM package with `scripts/bundle.sh` replaces an `.xcodeproj`: `swift test` runs the tests, and the script builds an arm64 release, adds `Info.plist`, and signs the bundle ad hoc with Hardened Runtime and the Photos entitlement. With no signing identity installed, each rebuilt bundle counts as a new app to macOS, so Photos access is asked again after every rebuild.
 
 Concurrency model:
 
@@ -98,7 +100,7 @@ These rules hold regardless of settings, and each one has a unit test.
 1. **The app never deletes from Photos.** `PhotoLibraryService` has no delete method, and no code calls `PHAssetChangeRequest.deleteAssets`.
 2. **One job at a time.** No two jobs run concurrently, in the same mode or across modes.
 3. **Scan is read-only.** A scan writes nothing: not to the Photos library, not to the export folder, and not to the app's own files.
-4. **Writes need a button.** The Photos library is written only when the user presses Export & Mark, Rate & Mark or Revert. Each button label shows the count, e.g. "Export & Mark 38 videos".
+4. **Writes need a button.** The Photos library is written only when the user presses Export & Mark, Rate & Mark or Revert. The one exception is setup: at launch the app creates any of its three albums that is missing, empty. Each button label shows the count, e.g. "Export & Mark 38 videos".
 5. **Only verified videos are marked.** A video is added to `video-to-delete` only after its export is verified by hash read-back.
 6. **Never overwrite, never write outside the export folder.** Temporary files live in `<exportDir>/.photoscleaner-tmp/` and are renamed into place.
 7. **No duplicate local copies.** If a just-downloaded video has the same size and SHA-256 as any file already in the export folder, the new copy is discarded and the existing file counts as its export.
@@ -306,12 +308,12 @@ All state lives in `~/.photos-cleaner/`, which the app creates at launch if it's
 `runs.jsonl` is the activity log: one JSON object per finished run, appended and flushed when the run ends. A line that doesn't parse, such as one cut off by a crash, is skipped. Missing fields get defaults, so adding a field needs no migration.
 
 ```jsonl
-{"run":12,"mode":"photos","task":"rateAndMark","scope":"olderThan 90","start":"2026-11-03T11:39:58Z","end":"2026-11-03T11:41:02Z","outcome":"ok","counts":{"rated":9812,"addedLowQuality":1310,"addedDuplicated":1104},"albums":{"photo-low-quality":1310,"photo-duplicated":1104,"video-to-delete":12}}
+{"run":12,"mode":"photos","task":"rateAndMark","scope":"olderThan 90","start":"2026-11-03T11:39:58Z","end":"2026-11-03T11:41:02Z","outcome":"ok","counts":{"rated":9812,"addedLowQuality":1310,"addedDuplicated":1104},"albums":{"photoDuplicated":1104,"photoLowQuality":1310,"videoToDelete":12}}
 ```
 
 Nothing is stored per photo or per video. Album membership isn't stored: the albums in Photos are the source of truth, and the app re-fetches them when it needs them.
 
-**Album summary.** Each run's line in `runs.jsonl` includes the size of every app album when it ended. Activity compares that with the albums' current sizes, so it can say how many items the user deleted in Photos since the last run without tracking individual assets.
+**Album summary.** Each run's line in `runs.jsonl` includes the size of every app album when it ended, keyed by role (`videoToDelete`, `photoLowQuality`, `photoDuplicated`) so renaming an album doesn't break the comparison. Activity compares that with the albums' current sizes, so it can say how many items the user deleted in Photos since the last run without tracking individual assets.
 
 
 ## Edge cases and error handling
@@ -373,7 +375,7 @@ Build in six phases. Each ends with its acceptance criteria passing and the app 
 
 1. **Phase 0 — Spikes.** Answer every Phase 0 question.
    - *Done when:* `docs/spikes.md` has an answer for each item, and the spec is amended where needed.
-2. **Phase 1 — Skeleton.** App shell, sidebar with Videos and Photos sections, status bar with busy state, Photos authorization, `SettingsStore` with per-mode sections, `RunLog`, `JobRunner` enforcing one job at a time and keeping the Mac awake while it runs, Activity page, creation of the three albums.
+2. **Phase 1 — Skeleton.** App shell, sidebar with Videos and Photos sections, status bar with busy state, Photos authorization, `SettingsStore` with per-mode sections, `RunLog`, `JobRunner` enforcing one job at a time and keeping the Mac awake while it runs, Activity page, creation of the three albums. Until real jobs exist, a temporary Run Test Job button on each mode page exercises the busy state; Phase 2 and 3 replace it.
    - *Done when:* a missing `~/.photos-cleaner/` is created at launch; with Photos access denied, the app shows only the blocking screen; settings of each mode survive a relaunch independently; a corrupt `settings.json` falls back to defaults without a crash; a `runs.jsonl` whose last line was cut off loads without that line; starting a fake job in one mode disables run buttons in both; the three albums appear in Photos.
 3. **Phase 2 — Videos mode.** Settings group, writable check, scan, `LocalFileIndex`, export pipeline with edited versions, `CaptureDateResolver`, `NamingEngine`, verify, mark in batches, album summary.
    - *Done when:* exporting 20 test videos produces `<dir>/<yyyy>/<yyyy-MM-dd> <name>` files whose SHA-256 matches the originals; an edited video also produces its `(edited)` file; a video recorded at 23:30 UTC+8 is named with its local date; a video already present under another name is not copied again; a same-name, different-content video gets ` (2)` before its extension; rerunning exports nothing new; pulling the network mid-run leaves no video in `video-to-delete` without its verified file; every verified video is in `video-to-delete`; killing the app mid-run and rerunning creates no second copy; videos deleted in Photos show in the Activity album summary; a video rated 3★ in Photos is not exported and leaves video-to-delete on the next run.
