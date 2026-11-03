@@ -254,7 +254,7 @@ extension SpikeRunner {
 
             let batch = Array(ids.prefix(3))
             var started = Date()
-            try await PHPhotoLibrary.shared().performChanges {
+            try await Library.change {
                 PHAsset.fetchAssets(withLocalIdentifiers: batch, options: nil).enumerateObjects { asset, _, _ in
                     PHAssetChangeRequest(for: asset).rating = .three
                 }
@@ -263,7 +263,7 @@ extension SpikeRunner {
 
             started = Date()
             for id in ids.suffix(3) {
-                try await PHPhotoLibrary.shared().performChanges {
+                try await Library.change {
                     PHAsset.fetchAssets(withLocalIdentifiers: [id], options: nil).enumerateObjects { asset, _, _ in
                         PHAssetChangeRequest(for: asset).rating = .four
                     }
@@ -274,9 +274,16 @@ extension SpikeRunner {
             var ratings: [Int] = []
             readBack.enumerateObjects { asset, _, _ in ratings.append(asset.rating.rawValue) }
             say("Read back: \(ratings)")
+            for clause in ["rating >= 3", "rating == 4"] {
+                let options = PHFetchOptions()
+                options.predicate = NSPredicate(format: "mediaType == %d AND \(clause)", PHAssetMediaType.image.rawValue)
+                var count = -1
+                let exception = SpikeCatchException { count = PHAsset.fetchAssets(with: options).count }
+                say("Predicate `\(clause)` while set: " + (exception ?? "\(count) (expected \(clause == "rating >= 3" ? 6 : 3))"))
+            }
 
             pause("Ratings are set on 6 photos taken \(photos.map { day($0.creationDate) }.joined(separator: ", ")). To check Shared Library sync, look at them on another participant's device now. Continue restores them to unrated.")
-            try await PHPhotoLibrary.shared().performChanges {
+            try await Library.change {
                 PHAsset.fetchAssets(withLocalIdentifiers: ids, options: nil).enumerateObjects { asset, _, _ in
                     PHAssetChangeRequest(for: asset).rating = .unset
                 }
@@ -296,7 +303,7 @@ extension SpikeRunner {
             let photos = Array(Library.fetch(.image, in: range, limit: .max).suffix(50))
             let ids = photos.map(\.localIdentifier)
             let created = Locked<String?>(nil)
-            try await PHPhotoLibrary.shared().performChanges {
+            try await Library.change {
                 let request = PHAssetCollectionChangeRequest.creationRequestForAssetCollection(withTitle: "photos-cleaner-spike")
                 created.with { $0 = request.placeholderForCreatedAssetCollection.localIdentifier }
             }
@@ -304,7 +311,7 @@ extension SpikeRunner {
             UserDefaults.standard.set(albumID, forKey: Self.albumKey)
             say("Created album id \(albumID)")
 
-            try await PHPhotoLibrary.shared().performChanges {
+            try await Library.change {
                 guard let album = PHAssetCollection.fetchAssetCollections(withLocalIdentifiers: [albumID], options: nil).firstObject else { return }
                 PHAssetCollectionChangeRequest(for: album)?.addAssets(PHAsset.fetchAssets(withLocalIdentifiers: ids, options: nil))
             }
@@ -316,7 +323,7 @@ extension SpikeRunner {
             if !missing.isEmpty { say("Not added: " + missing.map { day($0.creationDate) }.joined(separator: ", ")) }
 
             pause("The album holds \(members.count) photos. In Photos, check whether Shared Library photos appear in \"photos-cleaner-spike\". Continue removes them.")
-            try await PHPhotoLibrary.shared().performChanges {
+            try await Library.change {
                 guard let album = PHAssetCollection.fetchAssetCollections(withLocalIdentifiers: [albumID], options: nil).firstObject else { return }
                 PHAssetCollectionChangeRequest(for: album)?.removeAssets(PHAsset.fetchAssets(withLocalIdentifiers: ids, options: nil))
             }
@@ -339,7 +346,7 @@ extension SpikeRunner {
     func deleteSpikeAlbum() async {
         await run("album-delete") {
             guard let id = UserDefaults.standard.string(forKey: Self.albumKey) else { return say("No spike album recorded.") }
-            try await PHPhotoLibrary.shared().performChanges {
+            try await Library.change {
                 PHAssetCollectionChangeRequest.deleteAssetCollections(PHAssetCollection.fetchAssetCollections(withLocalIdentifiers: [id], options: nil))
             }
             UserDefaults.standard.removeObject(forKey: Self.albumKey)

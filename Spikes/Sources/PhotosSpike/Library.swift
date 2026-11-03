@@ -47,6 +47,11 @@ enum Library {
         return assets
     }
 
+    /// PhotoKit runs the block on its own queue, so it must not inherit the caller's main-actor isolation.
+    static func change(_ block: @escaping @Sendable () -> Void) async throws {
+        try await PHPhotoLibrary.shared().performChanges(block)
+    }
+
     static func original(of asset: PHAsset) -> PHAssetResource? {
         let wanted: PHAssetResourceType = asset.mediaType == .video ? .video : .photo
         return PHAssetResource.assetResources(for: asset).first { $0.type == wanted }
