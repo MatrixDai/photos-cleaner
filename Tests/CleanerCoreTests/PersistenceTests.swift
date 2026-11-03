@@ -31,7 +31,7 @@ struct AppSettingsTests {
         let settings = try decode(#"{"videos": {"olderThanDays": 0, "parallelExports": 9}, "photos": {"cameraPhotosPerRun": 5}}"#)
         #expect(settings.videos.olderThanDays == 1)
         #expect(settings.videos.parallelExports == 4)
-        #expect(settings.photos.cameraPhotosPerRun == 100)
+        #expect(settings.photos.cameraPhotosPerRun == 10)
     }
 
     @Test(arguments: ["[0.1, 0.2]", "[0.6, 0.3, 0.0, -0.3]"])
@@ -71,12 +71,12 @@ struct SettingsStoreTests {
         first.flush()
 
         let second = try SettingsStore(directory: dir)
-        second.update { $0.photos.cameraPhotosPerRun = 2_000 }
+        second.update { $0.photos.cameraPhotosPerRun = 500 }
         second.flush()
 
         let third = try SettingsStore(directory: dir)
         #expect(third.settings.videos.olderThanDays == 30)
-        #expect(third.settings.photos.cameraPhotosPerRun == 2_000)
+        #expect(third.settings.photos.cameraPhotosPerRun == 500)
     }
 
     @Test func corruptFileIsKeptAsideAndDefaultsLoad() throws {

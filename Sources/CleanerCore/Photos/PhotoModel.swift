@@ -78,9 +78,6 @@ public final class PhotoModel {
         await library.image(for: photo.id, side: side)
     }
 
-    public var lowQualityCount: Int {
-        starCounts.filter { PhotoRater.lowQualityStars.contains($0.key) }.values.reduce(0, +)
-    }
 
     public func scan() async {
         notice = nil
@@ -110,13 +107,12 @@ public final class PhotoModel {
     }
 
     public func rateAndMark() async {
-        guard let scan, canRate, let lowQuality = settings.settings.photos.albums.lowQuality.id else { return }
-        let duplicated = settings.settings.photos.albums.duplicated.id
+        guard let scan, canRate else { return }
         let stars = Dictionary(uniqueKeysWithValues: photosToRate.map { ($0.id, self.stars($0)) })
         let adjusted = adjustedCount
         let rater = PhotoRater(library: library)
         let finished = await jobs.run(mode: .photos, name: "rate & mark") { context in
-            var summary = try await rater.rateAndMark(scan, stars: stars, lowQualityAlbum: lowQuality, duplicatedAlbum: duplicated, context: context)
+            var summary = try await rater.rateAndMark(scan, stars: stars, context: context)
             summary.counts["adjusted"] = adjusted
             return summary
         }
@@ -126,7 +122,7 @@ public final class PhotoModel {
         }
         self.scan = nil
         adjustedStars = [:]
-        notice = "Rated \(summary.counts["rated"] ?? 0) photos; added \(summary.counts["addedLowQuality"] ?? 0) to photo-low-quality."
+        notice = "Rated \(summary.counts["rated"] ?? 0) photos. In Photos, filter by 1★ or 2★ to review and delete the low ones."
     }
 
     public func startOver() {

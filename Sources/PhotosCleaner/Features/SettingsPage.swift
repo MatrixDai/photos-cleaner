@@ -51,7 +51,6 @@ struct SettingsPage: View {
                 if settings.photos.starThresholds != settings.photos.starThresholds.sorted() {
                     Text("Each threshold must be at least the one before it.").font(.caption).foregroundStyle(.red)
                 }
-                albumField(.photoLowQuality)
                 albumField(.photoDuplicated)
             }
 
@@ -96,7 +95,6 @@ struct SettingsPage: View {
     private func label(_ role: AlbumRole) -> String {
         switch role {
         case .videoToDelete: "Album"
-        case .photoLowQuality: "Low-quality album"
         case .photoDuplicated: "Similar-shots album"
         }
     }

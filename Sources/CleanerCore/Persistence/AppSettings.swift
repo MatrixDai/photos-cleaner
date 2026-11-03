@@ -85,7 +85,6 @@ public struct PhotoScopeSetting: Codable, Equatable, Sendable {
 }
 
 public struct PhotoAlbums: Codable, Equatable, Sendable {
-    public var lowQuality = AlbumRef(name: "photo-low-quality")
     public var duplicated = AlbumRef(name: "photo-duplicated")
 
     public init() {}
@@ -93,17 +92,16 @@ public struct PhotoAlbums: Codable, Equatable, Sendable {
     public init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let defaults = PhotoAlbums()
-        lowQuality = container.value(.lowQuality, default: defaults.lowQuality)
         duplicated = container.value(.duplicated, default: defaults.duplicated)
     }
 }
 
 public struct PhotoSettings: Codable, Equatable, Sendable {
-    public static let cameraPhotosPerRunRange = 100...10_000
+    public static let cameraPhotosPerRunRange = 10...1_000
 
     public var scope = PhotoScopeSetting()
     public var starThresholds = [-0.3, 0.0, 0.3, 0.6]
-    public var cameraPhotosPerRun = 1_000
+    public var cameraPhotosPerRun = 100
     public var resumeAfter: Date?
     public var albums = PhotoAlbums()
 

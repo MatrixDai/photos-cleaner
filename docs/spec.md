@@ -9,7 +9,7 @@ Apple Photos Cleaner is a single-window macOS app with two independent modes, ru
 | Mode | Scope | What it does | Albums |
 | --- | --- | --- | --- |
 | **Videos: export & cleanup** | Videos older than N days (default 90) | Exports the original and any edited version to a local folder, verifies by hash read-back, skips copies that already exist locally, marks the video. The app never rates videos; a video the user rated 3★ or higher is left alone. | `video-to-delete` |
-| **Photos: rating & similar shots** | Unrated camera photos older than N days (default 90), oldest first, up to 1,000 camera photos per run; or every camera photo taken within a date range | Rates each photo 1★–5★ with one set of star thresholds, marks low-rated photos, groups similar shots and marks them. A date-range scan re-rates every photo in it, overriding existing stars. Photos are never exported. | `photo-low-quality`, `photo-duplicated` |
+| **Photos: rating & similar shots** | Unrated camera photos older than N days (default 90), oldest first, up to 100 camera photos per run (at most 1,000); or every camera photo taken within a date range | Rates each photo 1★–5★ with one set of star thresholds (low-rated photos are found in Photos by filtering on stars), groups similar shots and marks them. A date-range scan re-rates every photo in it, overriding existing stars. Photos are never exported. | `photo-duplicated` |
 
 Everything goes through public PhotoKit and Vision APIs against the Mac's System Photo Library. There is no Apple ID login, no private iCloud API, no network traffic of its own, and no LLM.
 
@@ -100,12 +100,12 @@ These rules hold regardless of settings, and each one has a unit test.
 1. **The app never deletes from Photos.** `PhotoLibraryService` has no delete method, and no code calls `PHAssetChangeRequest.deleteAssets`.
 2. **One job at a time.** No two jobs run concurrently, in the same mode or across modes.
 3. **Scan is read-only.** A scan writes nothing: not to the Photos library, not to the export folder, and not to the app's own files.
-4. **Writes need a button.** The Photos library is written only when the user presses Export & Mark or Rate & Mark. The one exception is setup: at launch the app creates any of its three albums that is missing, empty. Each button label shows the count, e.g. "Export & Mark 38 videos".
+4. **Writes need a button.** The Photos library is written only when the user presses Export & Mark or Rate & Mark. The one exception is setup: at launch the app creates either of its two albums that is missing, empty. Each button label shows the count, e.g. "Export & Mark 38 videos".
 5. **Only verified videos are marked.** A video is added to `video-to-delete` only after its export is verified by hash read-back.
 6. **Never overwrite, never write outside the export folder.** Temporary files live in `<exportDir>/.photoscleaner-tmp/` and are renamed into place.
 7. **No duplicate local copies.** If a just-downloaded video has the same size and SHA-256 as any file already in the export folder, the new copy is discarded and the existing file counts as its export.
 8. **Existing ratings are kept unless the user picks a date range.** An older-than scan selects only unrated photos, so it never changes a rating. A date-range scan re-rates every photo in the range, overwriting existing stars; the page says so beside the date fields, and the confirmation sheet shows how many existing ratings will be overwritten. The app doesn't track who set a rating: app-set and user-set stars are treated the same.
-9. **The app touches only its own albums.** It adds to and removes from `video-to-delete`, `photo-low-quality` and `photo-duplicated`, and nothing else. Removing an item from one of them by hand isn't remembered; to keep a photo or video, the user rates it 3★ or higher.
+9. **The app touches only its own albums.** It adds to and removes from `video-to-delete` and `photo-duplicated`, and nothing else. Removing an item from one of them by hand isn't remembered; to keep a photo or video, the user rates it 3★ or higher.
 10. **Every run is logged.** Each run records what it changed (counts of files written, items added to and removed from each album, ratings written) and shows it in Activity.
 
 ## UI layout and settings
@@ -121,11 +121,11 @@ The window is a `NavigationSplitView` with four pages: Videos, Photos, Activity 
 │ ▸ Rating &       │ └───────────────────────────────────────────────────────┘ │
 │   Similar Shots  │                                                           │
 │ APP              │ ┌ Results ──────────────────────────────────────────────┐ │
-│   Activity       │ │ 1★ 41 · 2★ 103 · 3★ 487 · 4★ 224 · 5★ 145 · 12 yours │ │
+│   Activity       │ │ 1★ 4 · 2★ 10 · 3★ 48 · 4★ 23 · 5★ 15 · 6 yours        │ │
 │   Settings       │ │ ▢ Feb 16, 2026 10:02   0.42   ★★★★☆   –               │ │
 │                  │ │ Similar: 31 groups · double-click a row to review     │ │
 │                  │ └───────────────────────────────────────────────────────┘ │
-│                  │ [Scan] [Rate & Mark 1,000 photos]  ██░░ 380/1,000 [Cancel]│
+│                  │ [Scan] [Rate & Mark 100 photos]  ███░░ 38/100 [Cancel]    │
 ├──────────────────┴───────────────────────────────────────────────────────────┤
 │ Photos: full access ✓ │ Busy: Photos scan │ continuing after 2015-03-02      │
 └──────────────────────────────────────────────────────────────────────────────┘
@@ -136,7 +136,7 @@ Pages:
 - **Videos · Export & Cleanup:** older than N days, a results table (date, name, size, status, file) and the action bar: Scan, Export & Mark N, progress, Cancel.
 - **Photos · Rating & Similar Shots:** a Scope group (older than N days, or a from–to date range with a hint that it re-rates every photo in it), results (live per-star counts, then a sortable table of the scanned photos with a thumbnail, date taken, score, suggested stars the user can change, and current stars; double-clicking a row opens a large preview where keys 1–5 set the stars and ← → step through the photos; the similar-shot group count and preview grid follow in Phase 4) and the action bar: Scan, Rate & Mark N, progress, Cancel.
 - **Activity:** the run log, an album summary (each app album's current size and the change since the last run, e.g. "video-to-delete: 12 videos, 38 fewer than after the last run").
-- **Settings:** a Videos section (export folder with Choose…, Reveal in Finder and writable badge; file name template with live preview; parallel exports; album name), a Photos section (camera photos per run, star thresholds, the two album names) and a Data section (the data folder with Reveal in Finder, and Reset all settings).
+- **Settings:** a Videos section (export folder with Choose…, Reveal in Finder and writable badge; file name template with live preview; parallel exports; album name), a Photos section (camera photos per run, star thresholds, the similar-shots album name) and a Data section (the data folder with Reveal in Finder, and Reset all settings).
 
 **Busy state.** While a job runs, the status bar shows the busy mode and progress on every page. Scan, Export and Rate buttons in both modes are disabled until it finishes or is cancelled. Switching pages during a job is allowed.
 
@@ -186,12 +186,12 @@ Every Export & Mark also removes from `video-to-delete` each video the user has 
 
 ## Photos mode: rating & similar shots
 
-Photos mode rates camera photos in a chosen scope 1★–5★ with one rule — four star thresholds — and adds every 1★–2★ photo that isn't part of a similar-shot group to `photo-low-quality`. It also groups similar shots taken close together and adds them, whatever their stars, only to `photo-duplicated`. It never exports or deletes photos, and no LLM is involved.
+Photos mode rates camera photos in a chosen scope 1★–5★ with one rule — four star thresholds — that the user can override per photo. There is no album for low-rated photos: Photos already filters by star, so the user reviews and deletes 1★–2★ photos there. It also groups similar shots taken close together and adds them, whatever their stars, only to `photo-duplicated`. It never exports or deletes photos, and no LLM is involved.
 
 **Settings:**
 
 - **Scope**, on the Rating & Similar Shots page: older than N days (default 90), or taken between a start and end date.
-- On the Settings page: **Star thresholds**, **Camera photos per run** (default 1,000), and the two album names. The thresholds decide each photo's suggested stars.
+- On the Settings page: **Star thresholds**, **Camera photos per run** (default 100), and the similar-shots album name. The thresholds decide each photo's suggested stars.
 
 **Scope** (`PhotoScope`). Image assets only; hidden photos excluded, favorites included. The two scope kinds select photos differently:
 
@@ -199,7 +199,7 @@ Photos mode rates camera photos in a chosen scope 1★–5★ with one rule — 
 | --- | --- | --- |
 | Fetch | `creationDate > resumeAfter AND creationDate < now − N days AND rating == 0` | 00:00 on the start date to 24:00 on the end date, system time zone; Scan disabled if the end is before the start |
 | Selects | Only **unrated** photos taken after the resume point, oldest first, until the per-run limit of camera photos is reached | **Every** photo in the range, rated or not |
-| Over the limit | Takes the oldest N camera photos; pressing Scan again with no setting change takes the next N | The camera check runs over the whole range first; if it finds more than N camera photos, Scan stops before any scoring: "This range has 1,420 camera photos; the limit is 1,000. Narrow the range." |
+| Over the limit | Takes the oldest N camera photos; pressing Scan again with no setting change takes the next N | The camera check runs over the whole range first; if it finds more than N camera photos, Scan stops before any scoring: "This range has 142 camera photos; the limit is 100. Narrow the range." |
 | Nothing left | "No more unrated photos older than 90 days." with a Start over button | "No camera photos in this range." |
 | Rating | Every selected photo is unrated, so all are rated | Every photo is re-rated, overwriting existing stars |
 | Similar shots | Grouped among the selected photos | Every photo in the range is regrouped |
@@ -221,7 +221,7 @@ The check runs first in the analysis pass, so non-camera photos never get an aes
 - **Aesthetics:** Vision `CalculateImageAestheticsScoresRequest` (macOS 15+) returns `overallScore`, from −1 (poor) to 1 (excellent). It already penalizes blur, bad exposure and poor framing. Input is a 1024×1024 aspect-fit derivative from `PHImageManager.requestImage` (`deliveryMode = .highQualityFormat`, `resizeMode = .fast`, `isNetworkAccessAllowed = true`), not the full original.
 - **Feature print,** in memory only and never written to disk, for photos that have another photo within 30 s (see Similar shots). It is computed from the same derivative, scaled to 512 px, so no second download is needed. The request revision is pinned to the one calibrated in Phase 0, because distances and thresholds from different revisions aren't comparable.
 
-**Per-run limit.** At most N camera photos per scan (default 1,000, at most 10,000, so the review table stays manageable), selected as in the Scope table; non-camera photos don't count. In older-than mode the limit is extended to the end of the last sequence, so a group is never split across runs. The limit only bounds how long one scan takes. It is unrelated to the write batch of 200, which is how many assets go into one `performChanges` call.
+**Per-run limit.** At most N camera photos per scan (default 100, at most 1,000, so every photo in the review table can actually be reviewed), selected as in the Scope table; non-camera photos don't count. In older-than mode the limit is extended to the end of the last sequence, so a group is never split across runs. The limit only bounds how long one scan takes. It is unrelated to the write batch of 200, which is how many assets go into one `performChanges` call.
 
 **Star rating** (`StarRater`). After a scan, each photo gets suggested stars from the four thresholds on the Settings page, and the results table shows them. The user can review any photo in the preview and change its stars there or in the table; Rate & Mark writes the stars as shown, and the confirmation says how many were changed by hand. Setting a photo back to its suggestion drops the change. Starting values are −0.3, 0.0, 0.3 and 0.6: below −0.3 is 1★, −0.3 to 0.0 is 2★, 0.0 to 0.3 is 3★, 0.3 to 0.6 is 4★, and 0.6 or above is 5★. This is the app's only rating rule; similar shots get no special treatment, so a group can be all 4–5★ or all 1–2★. Expect to adjust the thresholds after a few test runs on real photos: in Phase 0, 20 photos from 1999–2007 scored 0.32–0.80, which the starting values would mostly rate 4★. An older-than scan rates only unrated photos, so new thresholds reach photos rated earlier only through a date-range scan. To tune them, the page shows how many of this scan's photos will end up at each star, 1★ to 5★, both overall and for those in similar-shot groups. The counts update live as thresholds or individual stars change, and nothing is written until the user presses Rate & Mark:
 
@@ -251,12 +251,11 @@ The scan's groups stay in memory until Rate & Mark uses them. If the app quits b
 
 1. **Write ratings** per the rules above, with `PHAssetChangeRequest.rating` in `performChanges` batches of 200. Use the `PHAsset.Rating` case names from the SDK (unset plus 1–5 stars). Current ratings are re-read first: in older-than mode a photo rated since the scan is left alone, and a photo already at its target stars isn't written again.
 2. **Sync `photo-duplicated`** (Phase 4). Add the members of every group from this scan, and remove this scan's photos that are in no group. Also remove any album member that no longer has another member within 30 s, such as the one shot left after the user deleted the rest of its group. This check uses only creation dates, so earlier groups don't need to be stored.
-3. **Sync `photo-low-quality`.** Add this scan's photos rated 1★–2★, whether the app or the user set the rating, unless they are in `photo-duplicated`, so no photo is in both albums. Also add the shots that left `photo-duplicated` in step 2 if they are 1★–2★. Remove any album member that is now 3★ or above, either after a re-rate or because the user raised the stars to keep the photo, and any that is now in `photo-duplicated`.
-4. **Record** the run in `runs.jsonl` with the counts of each step, and show it in Activity. In older-than mode, move the resume point to the last photo of this scan.
+3. **Record** the run in `runs.jsonl` with the counts of each step, and show it in Activity. In older-than mode, move the resume point to the last photo of this scan.
 
-**User review in Photos.** Open `photo-low-quality` and filter by 1★ or 2★, or open `photo-duplicated`, where similar shots sit next to each other because the album sorts by date. Delete what you don't want. If the stars feel wrong, adjust the thresholds on the Settings page or the stars in the results table, then scan that date range again.
+**User review in Photos.** In the library, filter by 1★ or 2★ to see the low-rated photos, or open `photo-duplicated`, where similar shots sit next to each other because the album sorts by date. Delete what you don't want. If the stars feel wrong, adjust the thresholds on the Settings page or the stars in the results table, then scan that date range again.
 
-**Keeping a photo.** Raise it to 3★ or higher in Photos. The next Rate & Mark removes it from `photo-low-quality`, and older-than scans never change existing stars. A date-range scan does re-rate it, so after one, re-check the photos you meant to keep. In `photo-duplicated`, a shot drops out of the album once the rest of its group is deleted; if it is still 1★–2★, it then moves to photo-low-quality. Removing an item from an album by hand isn't remembered, so the next run may add it back.
+**Keeping a photo.** Raise it to 3★ or higher in Photos; older-than scans never change existing stars. A date-range scan does re-rate it, so after one, re-check the photos you meant to keep. In `photo-duplicated`, a shot drops out of the album once the rest of its group is deleted. Removing an item from an album by hand isn't remembered, so the next run may add it back.
 
 **Why no Ollama.** Vision's aesthetics model is built for this, runs on the Neural Engine and gives consistent scores. A local vision LLM would be far slower per image, use a lot of RAM, and produce scores that are hard to calibrate across tens of thousands of photos. Vision aesthetics is a Vision framework feature, not Apple Intelligence, and Phase 0 confirmed it works in the user's region.
 
@@ -288,7 +287,6 @@ All state lives in `~/.photos-cleaner/`, which the app creates at launch if it's
     "cameraPhotosPerRun": 1000,
     "resumeAfter": null,
     "albums": {
-      "lowQuality": { "name": "photo-low-quality", "id": null },
       "duplicated": { "name": "photo-duplicated", "id": null }
     }
   }
@@ -300,12 +298,12 @@ All state lives in `~/.photos-cleaner/`, which the app creates at launch if it's
 `runs.jsonl` is the activity log: one JSON object per finished run, appended and flushed when the run ends. A line that doesn't parse, such as one cut off by a crash, is skipped. Missing fields get defaults, so adding a field needs no migration.
 
 ```jsonl
-{"run":12,"mode":"photos","task":"rateAndMark","scope":"olderThan 90","start":"2026-11-03T11:39:58Z","end":"2026-11-03T11:41:02Z","outcome":"ok","counts":{"rated":9812,"addedLowQuality":1310,"addedDuplicated":1104},"albums":{"photoDuplicated":1104,"photoLowQuality":1310,"videoToDelete":12}}
+{"run":12,"mode":"photos","task":"rateAndMark","scope":"olderThan 90","start":"2026-11-03T11:39:58Z","end":"2026-11-03T11:41:02Z","outcome":"ok","counts":{"rated":98,"adjusted":6,"addedDuplicated":11},"albums":{"photoDuplicated":11,"videoToDelete":12}}
 ```
 
 Nothing is stored per photo or per video. Album membership isn't stored: the albums in Photos are the source of truth, and the app re-fetches them when it needs them.
 
-**Album summary.** Each run's line in `runs.jsonl` includes the size of every app album when it ended, keyed by role (`videoToDelete`, `photoLowQuality`, `photoDuplicated`) so renaming an album doesn't break the comparison. Activity compares that with the albums' current sizes, so it can say how many items the user deleted in Photos since the last run without tracking individual assets.
+**Album summary.** Each run's line in `runs.jsonl` includes the size of every app album when it ended, keyed by role (`videoToDelete`, `photoDuplicated`) so renaming an album doesn't break the comparison. Activity compares that with the albums' current sizes, so it can say how many items the user deleted in Photos since the last run without tracking individual assets.
 
 
 ## Edge cases and error handling
@@ -339,7 +337,6 @@ The rule throughout: a failure skips the affected item and is logged; only condi
 | Photos | Analysis of a photo fails | Skipped this run; it stays unrated and the resume point moves past it; Start over or a date range tries it again |
 | Photos | Old photos imported later, or ratings cleared by hand in Photos | Older-than mode doesn't revisit photos before the resume point; use Start over or scan their date range |
 | Photos | Date range would overwrite existing stars | The hint beside the dates says so; the confirmation sheet shows the count before anything is written |
-| Photos | Photo in `photo-low-quality` is 3★+ after a date-range re-rate | Removed from the album during Rate & Mark |
 | Photos | App quits between Scan and Rate & Mark | Nothing was written; the next scan selects the same photos and re-prints them |
 | Photos | More than 100 similar shots in a row | The group closes at 100; later shots start a new group |
 | Photos | A Vision request fails on every photo (e.g. after an OS update) | Abort the scan and show the Vision error, per the rule above |
@@ -368,16 +365,16 @@ Build in six phases. Each ends with its acceptance criteria passing and the app 
 
 1. **Phase 0 — Spikes.** Answer every Phase 0 question.
    - *Done when:* `docs/spikes.md` has an answer for each item, and the spec is amended where needed.
-2. **Phase 1 — Skeleton.** App shell, sidebar with Videos and Photos sections, status bar with busy state, Photos authorization, `SettingsStore` with per-mode sections, `RunLog`, `JobRunner` enforcing one job at a time and keeping the Mac awake while it runs, Activity page, creation of the three albums. Until real jobs exist, a temporary Run Test Job button on each mode page exercises the busy state; Phase 2 and 3 replace it.
-   - *Done when:* a missing `~/.photos-cleaner/` is created at launch; with Photos access denied, the app shows only the blocking screen; settings of each mode survive a relaunch independently; a corrupt `settings.json` falls back to defaults without a crash; a `runs.jsonl` whose last line was cut off loads without that line; starting a fake job in one mode disables run buttons in both; the three albums appear in Photos.
+2. **Phase 1 — Skeleton.** App shell, sidebar with Videos and Photos sections, status bar with busy state, Photos authorization, `SettingsStore` with per-mode sections, `RunLog`, `JobRunner` enforcing one job at a time and keeping the Mac awake while it runs, Activity page, creation of the app's albums. Until real jobs exist, a temporary Run Test Job button on each mode page exercises the busy state; Phase 2 and 3 replace it.
+   - *Done when:* a missing `~/.photos-cleaner/` is created at launch; with Photos access denied, the app shows only the blocking screen; settings of each mode survive a relaunch independently; a corrupt `settings.json` falls back to defaults without a crash; a `runs.jsonl` whose last line was cut off loads without that line; starting a fake job in one mode disables run buttons in both; the app's albums appear in Photos.
 3. **Phase 2 — Videos mode.** Settings group, writable check, scan, `LocalFileIndex`, export pipeline with edited versions, `CaptureDateResolver`, `NamingEngine`, verify, mark in batches, album summary.
    - *Done when:* exporting 20 test videos produces `<dir>/<yyyy>/<yyyy-MM-dd> <name>` files whose SHA-256 matches the originals; an edited video also produces its `(edited)` file; a video recorded at 23:30 UTC+8 is named with its local date; a video already present under another name is not copied again; a same-name, different-content video gets ` (2)` before its extension; rerunning exports nothing new; pulling the network mid-run leaves no video in `video-to-delete` without its verified file; every verified video is in `video-to-delete`; killing the app mid-run and rerunning creates no second copy; videos deleted in Photos show in the Activity album summary; a video rated 3★ in Photos is not exported and leaves video-to-delete on the next run.
    - Unit tests cover the naming engine (tokens, sanitizing, NFC, collisions), the date resolver (offsets, missing metadata, fallback order) and dedupe (size prefilter, hash match).
-4. **Phase 3 — Photos mode: rating.** Scope (older than and date range), `CameraOriginFilter`, analysis pass, resume point and Start over, per-run limit, results table with suggested and adjustable stars and the preview, older-than and date-range runs, `photo-low-quality` sync.
-   - *Done when:* screenshots and images without camera EXIF are never rated; in older-than mode with the limit set to 500, a scan takes the 500 oldest unrated camera photos, skipping non-camera photos without counting them, pressing Scan again takes the next 500 without re-checking the non-camera photos already passed, and when none are left the app says so; Start over begins again at the oldest photo; a date-range scan takes every photo in the range, rated or not, and refuses a range over the limit; an older-than run never changes an existing rating; a date-range run overwrites all ratings in the range after showing how many it overwrites, and removes photos that are now 3★+ from `photo-low-quality`; stars changed in the table or preview are the ones written; a date-range run with new thresholds updates stars in that range; a photo the user raised to 3★ leaves photo-low-quality on the next run and is never re-rated by older-than runs.
+4. **Phase 3 — Photos mode: rating.** Scope (older than and date range), `CameraOriginFilter`, analysis pass, resume point and Start over, per-run limit, results table with suggested and adjustable stars and the preview, older-than and date-range runs.
+   - *Done when:* screenshots and images without camera EXIF are never rated; in older-than mode with the limit set to 500, a scan takes the 500 oldest unrated camera photos, skipping non-camera photos without counting them, pressing Scan again takes the next 500 without re-checking the non-camera photos already passed, and when none are left the app says so; Start over begins again at the oldest photo; a date-range scan takes every photo in the range, rated or not, and refuses a range over the limit; an older-than run never changes an existing rating; a date-range run overwrites all ratings in the range after showing how many it overwrites; stars changed in the table or preview are the ones written; a date-range run with new thresholds updates stars in that range; a photo the user raised to 3★ is never re-rated by older-than runs; Rate & Mark touches no album until Phase 4.
    - Unit tests cover scope boundaries (start and end dates, time zone) and the star rater (scores exactly on each threshold).
 5. **Phase 4 — Photos mode: similar shots.** Sequences, streaming feature prints, grouping with group cap and chain guard, `photo-duplicated` marking, group grid.
-   - *Done when:* on a hand-labeled set of 50 similar-shot groups and 50 distinct photos at the calibrated threshold, at least 90% of the groups are found and no more than 5% of distinct photos are wrongly grouped; group members get exactly the stars the thresholds give them; a 1★ group member is in photo-duplicated only, and moves to photo-low-quality once its group dissolves.
+   - *Done when:* on a hand-labeled set of 50 similar-shot groups and 50 distinct photos at the calibrated threshold, at least 90% of the groups are found and no more than 5% of distinct photos are wrongly grouped; group members get exactly the stars the thresholds give them; a group member leaves photo-duplicated once its group dissolves.
    - Unit tests cover the clusterer (synthetic distance matrices, chain guard), sequence splitting (30 s gaps) and the 100-photo group cap.
 6. **Phase 5 — Polish.** Activity filtering, error copy, keyboard shortcuts (⌘R scan, ⌘. cancel), empty states, README with setup and permissions.
 
@@ -401,8 +398,8 @@ Each mode has its own settings, persisted in `settings.json`. Everything else is
 | --- | --- | --- |
 | Scope | Older than 90 days | Or a date range (start and end date, inclusive), which always re-rates |
 | Star thresholds | −0.3 / 0.0 / 0.3 / 0.6 | −1 to 1; set on the Settings page |
-| Camera photos per run | 1,000 | 100–10,000; counts camera photos only. Older-than takes the oldest unrated first; a date range over the limit is refused |
-| Album names | `photo-low-quality`, `photo-duplicated` | — |
+| Camera photos per run | 100 | 10–1,000; counts camera photos only. Older-than takes the oldest unrated first; a date range over the limit is refused |
+| Album name | `photo-duplicated` | — |
 
 **Fixed behavior:**
 
@@ -419,7 +416,7 @@ Each mode has its own settings, persisted in `settings.json`. Everything else is
 | Non-camera images | Always skipped: a photo counts as a camera photo only if its original's EXIF has `Make` or `Model` |
 | Local duplicates | An identical file already in the export folder is reused, never copied again |
 | Rating rule | One rule for every photo: the four star thresholds |
-| `photo-low-quality` | Holds scanned photos rated 1★–2★, by the app or the user, except photos in `photo-duplicated`, which go only there; a member raised to 3★+ leaves on the next Rate & Mark |
+| Low-rated photos | No album: filter by 1★ or 2★ in Photos to review and delete them |
 
 **Internal constants** (in code, adjusted by the developer only):
 

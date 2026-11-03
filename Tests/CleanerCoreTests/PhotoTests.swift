@@ -194,11 +194,6 @@ struct PhotoRaterTests {
     private let base = ISO8601DateFormatter().date(from: "2015-01-01T00:00:00Z")!
     private let thresholds = [-0.3, 0.0, 0.3, 0.6]
 
-    private func setup() -> (FakeLibrary, String, String) {
-        let library = FakeLibrary()
-        return (library, library.addAlbum("photo-low-quality"), library.addAlbum("photo-duplicated"))
-    }
-
     private func result(_ photos: [(String, Double, Int)], dateRange: Bool = false) -> PhotoScanResult {
         let scope: ResolvedPhotoScope = dateRange
             ? .dateRange(from: "2015-01-01", to: "2015-01-01", start: base, end: base.addingTimeInterval(86_400))
@@ -208,66 +203,44 @@ struct PhotoRaterTests {
         return result
     }
 
-    private func rate(_ library: FakeLibrary, _ scan: PhotoScanResult, low: String, dup: String) async throws -> JobSummary {
+    private func rate(_ library: FakeLibrary, _ scan: PhotoScanResult) async throws -> JobSummary {
         let stars = Dictionary(uniqueKeysWithValues: scan.photos.map { ($0.id, StarRater.stars(for: $0.score, thresholds: thresholds)) })
-        return try await PhotoRater(library: library).rateAndMark(scan, stars: stars, lowQualityAlbum: low,
-                                                                  duplicatedAlbum: dup, context: JobContext(emit: { _ in }))
+        return try await PhotoRater(library: library).rateAndMark(scan, stars: stars, context: JobContext(emit: { _ in }))
     }
 
-    @Test func writesStarsAndMarksLowRatedPhotos() async throws {
-        let (library, low, dup) = setup()
+    @Test func writesStarsAndTouchesNoAlbum() async throws {
+        let library = FakeLibrary()
         for id in ["a", "b", "c"] { library.addPhoto(id, created: base) }
-        let summary = try await rate(library, result([("a", -0.5, 0), ("b", -0.1, 0), ("c", 0.7, 0)]), low: low, dup: dup)
+        let summary = try await rate(library, result([("a", -0.5, 0), ("b", -0.1, 0), ("c", 0.7, 0)]))
         #expect([library.rating("a"), library.rating("b"), library.rating("c")] == [1, 2, 5])
-        #expect(library.albums[low]?.members == ["a", "b"])
-        #expect(summary.counts["rated"] == 3 && summary.counts["addedLowQuality"] == 2)
+        #expect(summary.counts["rated"] == 3 && summary.counts["stars1"] == 1 && summary.counts["stars5"] == 1)
+        #expect(library.addBatches.isEmpty)
     }
 
     @Test func olderThanNeverChangesARatingSetSinceTheScan() async throws {
-        let (library, low, dup) = setup()
+        let library = FakeLibrary()
         library.addPhoto("a", created: base)
         library.setPhotoRating("a", 4)
-        let summary = try await rate(library, result([("a", -0.9, 0)]), low: low, dup: dup)
+        let summary = try await rate(library, result([("a", -0.9, 0)]))
         #expect(library.rating("a") == 4)
         #expect(summary.counts["rated"] == 0)
-        #expect(library.albums[low]?.members.isEmpty == true)
     }
 
-    @Test func dateRangeOverwritesAndRaisedPhotosLeaveTheAlbum() async throws {
-        let (library, low, dup) = setup()
+    @Test func dateRangeOverwritesExistingStars() async throws {
+        let library = FakeLibrary()
         library.addPhoto("a", created: base, rating: 1)
         library.addPhoto("b", created: base, rating: 5)
-        library.setMembers(low, ["a"])
-        let summary = try await rate(library, result([("a", 0.4, 1), ("b", -0.2, 5)], dateRange: true), low: low, dup: dup)
-        #expect(library.rating("a") == 4 && library.rating("b") == 2)
-        #expect(library.albums[low]?.members == ["b"])
-        #expect(summary.counts["overwritten"] == 2 && summary.counts["removedLowQuality"] == 1)
-    }
-
-    @Test func aPhotoTheUserRaisedOutsideTheScanLeavesLowQuality() async throws {
-        let (library, low, dup) = setup()
-        library.addPhoto("kept", created: base, rating: 3)
-        library.addPhoto("new", created: base)
-        library.setMembers(low, ["kept"])
-        _ = try await rate(library, result([("new", -0.5, 0)]), low: low, dup: dup)
-        #expect(library.albums[low]?.members == ["new"])
-        #expect(library.rating("kept") == 3)
-    }
-
-    @Test func similarShotMembersStayOutOfLowQuality() async throws {
-        let (library, low, dup) = setup()
-        library.addPhoto("grouped", created: base)
-        library.setMembers(dup, ["grouped"])
-        _ = try await rate(library, result([("grouped", -0.9, 0)]), low: low, dup: dup)
-        #expect(library.rating("grouped") == 1)
-        #expect(library.albums[low]?.members.isEmpty == true)
+        library.addPhoto("same", created: base, rating: 4)
+        let summary = try await rate(library, result([("a", 0.4, 1), ("b", -0.2, 5), ("same", 0.4, 4)], dateRange: true))
+        #expect(library.rating("a") == 4 && library.rating("b") == 2 && library.rating("same") == 4)
+        #expect(summary.counts["overwritten"] == 2 && summary.counts["rated"] == 2)
     }
 
     @Test func ratingsAreWrittenInBatchesOf200() async throws {
-        let (library, low, dup) = setup()
+        let library = FakeLibrary()
         let photos = (0..<450).map { ("p\($0)", 0.4, 0) }
         for photo in photos { library.addPhoto(photo.0, created: base) }
-        _ = try await rate(library, result(photos), low: low, dup: dup)
+        _ = try await rate(library, result(photos))
         #expect(library.ratingBatches.map(\.count) == [200, 200, 50])
     }
 }
@@ -292,12 +265,9 @@ struct PhotoModelTests {
         let model = try await model(library, analyzer)
         await model.photos.scan()
         #expect(model.photos.photosToRate.count == 3)
-        #expect(model.photos.lowQualityCount == 1)
         await model.photos.rateAndMark()
         #expect(model.settings.settings.photos.resumeAfter == old.addingTimeInterval(2 * 3600))
         #expect(library.rating("p0") == 1 && library.rating("p1") == 4)
-        let lowID = try #require(model.settings.settings.photos.albums.lowQuality.id)
-        #expect(library.albums[lowID]?.members == ["p0"])
 
         await model.photos.scan()
         #expect(model.photos.photosToRate.isEmpty)
@@ -353,13 +323,12 @@ struct PhotoModelTests {
         await model.photos.scan()
         let good = try #require(model.photos.photosToRate.first { $0.id == "good" })
         let bad = try #require(model.photos.photosToRate.first { $0.id == "bad" })
-        #expect(model.photos.starCounts[5] == 1 && model.photos.starCounts[1] == 1 && model.photos.lowQualityCount == 1)
+        #expect(model.photos.starCounts[5] == 1 && model.photos.starCounts[1] == 1)
 
         model.photos.setStars(2, for: good)
         model.photos.setStars(4, for: bad)
         #expect(model.photos.isAdjusted(good) && model.photos.adjustedCount == 2)
         #expect(model.photos.starCounts[5] == 0 && model.photos.starCounts[2] == 1 && model.photos.starCounts[4] == 1)
-        #expect(model.photos.lowQualityCount == 1)
 
         model.photos.setStars(4, for: bad)
         model.photos.setStars(1, for: bad)
@@ -368,8 +337,6 @@ struct PhotoModelTests {
 
         await model.photos.rateAndMark()
         #expect(library.rating("good") == 2 && library.rating("bad") == 4)
-        let lowID = try #require(model.settings.settings.photos.albums.lowQuality.id)
-        #expect(library.albums[lowID]?.members == ["good"])
         #expect(model.photos.adjustedCount == 0)
         #expect(await eventually { model.runs.first?.counts["adjusted"] == 2 })
     }

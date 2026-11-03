@@ -18,7 +18,7 @@ struct PhotoResults: View {
             VStack(alignment: .leading, spacing: 10) {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(summary(scan)).font(.callout).foregroundStyle(.secondary)
-                    StarCountsRow(counts: photos.starCounts, adjusted: photos.adjustedCount, lowQuality: photos.lowQualityCount)
+                    StarCountsRow(counts: photos.starCounts, adjusted: photos.adjustedCount)
                     if scan.scope.isDateRange, scan.alreadyRated > 0 {
                         Label("\(scan.alreadyRated.formatted()) photos in this range already have stars; they will be re-rated.",
                               systemImage: "exclamationmark.triangle")
@@ -99,7 +99,6 @@ struct PhotoRow: Identifiable {
 private struct StarCountsRow: View {
     let counts: [Int: Int]
     let adjusted: Int
-    let lowQuality: Int
 
     var body: some View {
         HStack(spacing: 18) {
@@ -109,8 +108,6 @@ private struct StarCountsRow: View {
                     Text((counts[stars] ?? 0).formatted()).monospacedDigit()
                 }
             }
-            Divider().frame(height: 14)
-            Text("\(lowQuality.formatted()) to photo-low-quality")
             if adjusted > 0 { Text("\(adjusted.formatted()) adjusted by you").foregroundStyle(Color.accentColor) }
         }
         .font(.callout)
@@ -251,7 +248,7 @@ struct PhotoActionBar: View {
     }
 
     private var rateTitle: String {
-        "Rate \(photos.photosToRate.count.formatted()) photos and add \(photos.lowQualityCount.formatted()) to photo-low-quality?"
+        "Rate \(photos.photosToRate.count.formatted()) photos?"
     }
 
     private var rateMessage: String {
