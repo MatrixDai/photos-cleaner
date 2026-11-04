@@ -104,6 +104,7 @@ struct StatusBar: View {
         case .photos:
             model.photos.tally.map { tally in
                 "\(tally.rated.formatted()) rated · " + (1...5).map { "\($0)★ \((tally.stars[$0] ?? 0).formatted())" }.joined(separator: "  ")
+                    + (tally.groups > 0 ? " · \(tally.groups.formatted()) similar groups" : "")
             } ?? "Rates photos without stars, newest first"
         case .activity, .settings:
             "Data folder: \(model.dataDirectory.path)"

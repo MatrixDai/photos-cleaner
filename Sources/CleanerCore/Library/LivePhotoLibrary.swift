@@ -134,6 +134,14 @@ public struct LivePhotoLibrary: PhotoLibraryService {
         return ratings
     }
 
+    public func creationDates(of ids: [String]) async -> [String: Date] {
+        var dates: [String: Date] = [:]
+        PHAsset.fetchAssets(withLocalIdentifiers: ids, options: nil).enumerateObjects { asset, _, _ in
+            dates[asset.localIdentifier] = asset.creationDate
+        }
+        return dates
+    }
+
     public func setRatings(_ ratings: [String: Int]) async throws {
         try await Self.change {
             PHAsset.fetchAssets(withLocalIdentifiers: Array(ratings.keys), options: nil).enumerateObjects { asset, _, _ in
