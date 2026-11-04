@@ -20,6 +20,7 @@ public protocol PhotoLibraryService: Sendable {
     /// Newest first.
     func photos(_ query: PhotoQuery) async -> [LibraryPhoto]
     func ratings(of ids: [String]) async -> [String: Int]
+    func creationDates(of ids: [String]) async -> [String: Date]
     func setRatings(_ ratings: [String: Int]) async throws
 }
 

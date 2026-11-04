@@ -71,6 +71,12 @@ final class FakeLibrary: PhotoLibraryService, @unchecked Sendable {
         }
     }
 
+    func creationDates(of ids: [String]) async -> [String: Date] {
+        lock.withLock {
+            Dictionary(uniqueKeysWithValues: _photos.filter { ids.contains($0.id) }.compactMap { photo in photo.creationDate.map { (photo.id, $0) } })
+        }
+    }
+
     func setRatings(_ ratings: [String: Int]) async throws {
         lock.withLock {
             _ratingBatches.append(ratings)
@@ -228,25 +234,40 @@ func eventually(timeout: Duration = .seconds(5), _ condition: () async -> Bool) 
     return await condition()
 }
 
+struct FakePrint: SimilarityPrint {
+    let value: Double
+
+    func distance(to other: any SimilarityPrint) -> Double? {
+        (other as? FakePrint).map { abs(value - $0.value) }
+    }
+}
+
 final class FakeAnalyzer: PhotoAnalyzing, @unchecked Sendable {
     private let lock = NSLock()
     private var scores: [String: Double] = [:]
+    private var prints: [String: Double] = [:]
     private var failing: Set<String> = []
     private var _calls: [String] = []
+    private var _printed: [String] = []
     var onScore: (@Sendable (String) -> Void)?
 
     var calls: [String] { lock.withLock { _calls } }
+    var printed: [String] { lock.withLock { _printed } }
 
     func score(_ id: String, _ score: Double) { lock.withLock { scores[id] = score } }
+    /// Photos whose print values differ by at most `SimilarShots.threshold` count as similar.
+    func print(_ id: String, _ value: Double) { lock.withLock { prints[id] = value } }
     func fail(_ id: String) { lock.withLock { _ = failing.insert(id) } }
     func heal(_ id: String) { lock.withLock { _ = failing.remove(id) } }
 
-    func aestheticsScore(_ photoID: String) async throws -> Double {
+    func analyze(_ photoID: String, featurePrint: Bool) async throws -> PhotoAnalysis {
         onScore?(photoID)
         return try lock.withLock {
             _calls.append(photoID)
             if failing.contains(photoID) { throw FakeError(message: "iCloud download failed") }
-            return scores[photoID] ?? 0
+            guard featurePrint else { return PhotoAnalysis(score: scores[photoID] ?? 0) }
+            _printed.append(photoID)
+            return PhotoAnalysis(score: scores[photoID] ?? 0, print: FakePrint(value: prints[photoID] ?? Double(_printed.count) * 10))
         }
     }
 }

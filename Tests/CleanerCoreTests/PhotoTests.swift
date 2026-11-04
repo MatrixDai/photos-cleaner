@@ -47,14 +47,54 @@ struct RatingScopeTests {
     }
 }
 
+struct SimilarShotsTests {
+    private let base = Date(timeIntervalSince1970: 1_500_000_000)
+
+    private func groups(_ seconds: [Double], _ values: [Double?]) -> [[Int]] {
+        SimilarShots.groups(dates: seconds.map { base.addingTimeInterval($0) }) { a, b in
+            guard let x = values[a], let y = values[b] else { return nil }
+            return abs(x - y)
+        }
+    }
+
+    @Test func sequencesSplitWhereTheGapExceeds30Seconds() {
+        let seconds: [Double?] = [100, 80, 51, 20, nil, -100, -110]
+        let runs = SimilarShots.sequences(seconds) { $0.map { base.addingTimeInterval($0) } }
+        #expect(runs.map { $0.map { $0 ?? 0 } } == [[100, 80, 51], [20], [0], [-100, -110]])
+    }
+
+    @Test func closeShotsWithin30SecondsAreGrouped() {
+        #expect(groups([0, 10, 20], [0, 0.1, 0.25]) == [[0, 1, 2]])
+    }
+
+    @Test func similarPhotosMoreThan30SecondsApartAreNotCompared() {
+        #expect(groups([0, 31], [0, 0]).isEmpty)
+    }
+
+    @Test func distancesAboveTheThresholdOrWithoutAPrintDoNotJoin() {
+        #expect(groups([0, 5, 10], [0, 0.21, nil]).isEmpty)
+    }
+
+    @Test func chainGuardDropsMembersThatDriftFromTheMedoid() {
+        let values = (0..<7).map { Double($0) * 0.15 }
+        #expect(groups((0..<7).map { Double($0) }, values) == [[1, 2, 3, 4, 5]])
+    }
+
+    @Test func groupsAreCappedAt100Photos() {
+        let found = groups((0..<150).map { Double($0) * 0.1 }, Array(repeating: 0, count: 150))
+        #expect(found.map(\.count).sorted() == [50, 100])
+    }
+}
+
 struct PhotoRatingRunTests {
     private let base = ISO8601DateFormatter().date(from: "2015-01-01T00:00:00Z")!
     private let thresholds = [-0.3, 0.0, 0.3, 0.6]
 
     private func at(_ hours: Double) -> Date { base.addingTimeInterval(hours * 3600) }
 
-    private func run(_ library: FakeLibrary, _ analyzer: FakeAnalyzer, scope: RatingScope = .unrated) async throws -> RatingTally {
-        try await PhotoRatingRun(library: library, analyzer: analyzer, scope: scope, thresholds: thresholds)
+    private func run(_ library: FakeLibrary, _ analyzer: FakeAnalyzer, scope: RatingScope = .unrated,
+                     album: String? = nil) async throws -> RatingTally {
+        try await PhotoRatingRun(library: library, analyzer: analyzer, scope: scope, thresholds: thresholds, duplicatesAlbum: album)
             .run(context: JobContext(emit: { _ in }), report: { _ in })
     }
 
@@ -148,6 +188,82 @@ struct PhotoRatingRunTests {
     }
 }
 
+struct DedupRunTests {
+    private let base = ISO8601DateFormatter().date(from: "2015-01-01T00:00:00Z")!
+    private let thresholds = [-0.3, 0.0, 0.3, 0.6]
+
+    private func at(_ seconds: Double) -> Date { base.addingTimeInterval(seconds) }
+
+    private func run(_ library: FakeLibrary, _ analyzer: FakeAnalyzer, scope: RatingScope = .unrated,
+                     album: String?) async throws -> RatingTally {
+        try await PhotoRatingRun(library: library, analyzer: analyzer, scope: scope, thresholds: thresholds, duplicatesAlbum: album)
+            .run(context: JobContext(emit: { _ in }), report: { _ in })
+    }
+
+    private func burst(_ library: FakeLibrary, _ analyzer: FakeAnalyzer) {
+        library.addPhoto("a", created: at(0))
+        library.addPhoto("b", created: at(5))
+        library.addPhoto("c", created: at(10))
+        library.addPhoto("alone", created: at(500))
+        analyzer.print("a", 0)
+        analyzer.print("b", 0.1)
+        analyzer.print("c", 5)
+        for id in ["a", "b", "c", "alone"] { analyzer.score(id, -0.8) }
+    }
+
+    @Test func similarShotsGoToTheAlbumAndAreRatedLikeAnyPhoto() async throws {
+        let library = FakeLibrary(), analyzer = FakeAnalyzer()
+        let album = library.addAlbum("photo-duplicated")
+        burst(library, analyzer)
+        let tally = try await run(library, analyzer, album: album)
+        #expect(library.albums[album]?.members == ["a", "b"])
+        #expect(Set(analyzer.printed) == ["a", "b", "c"])
+        #expect(tally.groups == 1 && tally.grouped == 2 && tally.addedToAlbum == 2)
+        #expect(["a", "b", "c", "alone"].allSatisfy { library.rating($0) == 1 })
+    }
+
+    @Test func dedupOffComputesNoPrintsAndLeavesTheAlbumAlone() async throws {
+        let library = FakeLibrary(), analyzer = FakeAnalyzer()
+        let album = library.addAlbum("photo-duplicated", members: ["old1"])
+        burst(library, analyzer)
+        let tally = try await run(library, analyzer, album: nil)
+        #expect(analyzer.printed.isEmpty && tally.groups == 0)
+        #expect(library.albums[album]?.members == ["old1"])
+    }
+
+    @Test func aSequenceIsNeverSplitAcrossWrites() async throws {
+        let library = FakeLibrary(), analyzer = FakeAnalyzer()
+        let album = library.addAlbum("photo-duplicated")
+        for index in 0..<30 { library.addPhoto("s\(index)", created: at(10_000 + Double(index))) }
+        for index in 0..<5 { library.addPhoto("single\(index)", created: at(Double(index) * 1000)) }
+        _ = try await run(library, analyzer, album: album)
+        #expect(library.ratingBatches.map(\.count) == [30, 5])
+    }
+
+    @Test func reRateRemovesPhotosInTheRangeThatNoLongerGroup() async throws {
+        let library = FakeLibrary(), analyzer = FakeAnalyzer()
+        library.addPhoto("x", created: at(3600), rating: 2)
+        library.addPhoto("y", created: at(-86_400), rating: 2)
+        library.addPhoto("z", created: at(-86_390), rating: 2)
+        let album = library.addAlbum("photo-duplicated", members: ["x", "y", "z"])
+        let scope = try RatingScope.reRate(from: base, to: base, timeZone: TimeZone(identifier: "UTC")!)
+        let tally = try await run(library, analyzer, scope: scope, album: album)
+        #expect(library.albums[album]?.members == ["y", "z"])
+        #expect(tally.removedFromAlbum == 1)
+    }
+
+    @Test func membersLeftAloneLeaveTheAlbum() async throws {
+        let library = FakeLibrary(), analyzer = FakeAnalyzer()
+        library.addPhoto("p", created: at(0), rating: 1)
+        library.addPhoto("q", created: at(10), rating: 1)
+        library.addPhoto("r", created: at(500), rating: 1)
+        let album = library.addAlbum("photo-duplicated", members: ["p", "q", "r"])
+        let tally = try await run(library, analyzer, album: album)
+        #expect(tally.total == 0 && tally.removedFromAlbum == 1)
+        #expect(library.albums[album]?.members == ["p", "q"])
+    }
+}
+
 @MainActor
 struct PhotoModelTests {
     private func model(_ library: FakeLibrary, _ analyzer: FakeAnalyzer) async throws -> AppModel {
@@ -183,6 +299,15 @@ struct PhotoModelTests {
         model.settings.update { $0.photos.starThresholds = [0.5, 0.6, 0.7, 0.8] }
         await model.photos.run()
         #expect(library.rating("p") == 1)
+    }
+
+    @Test func dedupNeedsTheAlbum() async throws {
+        let model = try await model(FakeLibrary(), FakeAnalyzer())
+        #expect(model.photos.dedup && model.photos.canRun)
+        model.settings.update { $0.photos.albums.duplicated.id = nil }
+        #expect(!model.photos.canRun && model.photos.scopeError?.contains("isn't set up") == true)
+        model.photos.dedup = false
+        #expect(model.photos.canRun)
     }
 
     @Test func reRateDefaultsToTheLastMonthAndRejectsAReversedRange() async throws {

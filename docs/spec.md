@@ -114,25 +114,26 @@ The window is a `NavigationSplitView` with four pages: Videos, Photos, Activity 
 ```
 ┌──────────────────┬───────────────────────────────────────────────────────────┐
 │ VIDEOS           │ Photos · Rating & Similar Shots                           │
-│   Export &       │ [ ] Re-rate photos taken from [2026-10-04] to [2026-11-04]│
-│   Cleanup        │ ⓘ Rates every photo without stars, newest first           │
-│ PHOTOS           ├───────────────────────────────────────────────────────────┤
-│ ▸ Rating &       │       ★     ★★    ★★★    ★★★★   ★★★★★                     │
-│   Similar Shots  │      120    340   1,210   2,050    400                    │
-│ APP              │   4,120 rated · 410 screenshots skipped · 6 failed        │
-│   Activity       │   4,536 of 24,518 photos · now at Mar 2024 · 0:41:12      │
-│   Settings       │                                                           │
+│   Export &       │       ★     ★★    ★★★    ★★★★   ★★★★★                     │
+│   Cleanup        │      120    340   1,210   2,050    400                    │
+│ PHOTOS           │   4,120 rated · 410 screenshots skipped · 6 failed        │
+│ ▸ Rating &       │   Similar shots: 85 groups · 260 photos · 260 added       │
+│   Similar Shots  │   4,536 of 24,518 photos · now at Mar 2024 · 0:41:12      │
+│ APP              ├───────────────────────────────────────────────────────────┤
+│   Activity       │ [✓] De-dup   similar shots go to photo-duplicated         │
+│   Settings       │ [ ] Re-rate photos taken from [2026-10-04] to [2026-11-04]│
+│                  │ ⓘ Rates every photo without stars, newest first           │
 │                  ├───────────────────────────────────────────────────────────┤
-│                  │ [Rate Photos]               ███░░ 4,536/24,518 [Cancel]   │
+│                  │ [Rate Photos]                          ███░░  [Cancel]    │
 ├──────────────────┴───────────────────────────────────────────────────────────┤
-│ Photos: full access ✓ │ Busy: Photos rate │ 4,120 rated · 1★ 120 2★ 340 …    │
+│ Photos: full access ✓ │ Busy: Photos rate · Keeping Mac awake                │
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
 
 Pages:
 
 - **Videos · Export & Cleanup:** older than N days, a results table (date, name, size, status, file) and the action bar: Scan, Export & Mark N, progress, Cancel.
-- **Photos · Rating & Similar Shots:** a Re-rate checkbox with a from–to date range and a hint line; a progress panel (see Photos mode); and the action bar: Rate Photos, progress, Cancel. Phase 4 adds the De-dup checkbox and the similar-shot counts.
+- **Photos · Rating & Similar Shots:** the progress panel at the top (see Photos mode), then the options (De-dup, Re-rate with a from–to date range, and a hint line), then the action bar: Rate Photos, a progress bar and Cancel. The panel is the only place that shows the run's counts; the action bar and status bar don't repeat them.
 - **Activity:** the run log, an album summary (each app album's current size and the change since the last run, e.g. "video-to-delete: 12 videos, 38 fewer than after the last run").
 - **Settings:** a Videos section (export folder with Choose…, Reveal in Finder and writable badge; file name template with live preview; parallel exports; album name), a Photos section (star thresholds, the similar-shots album name) and a Data section (the data folder with Reveal in Finder, and Reset all settings).
 
@@ -140,7 +141,7 @@ Pages:
 
 **Re-rate hint.** With Re-rate checked, the line under the options reads "Every photo in this range is rated again, overwriting its existing stars. Use a short range to try new thresholds." Rate Photos then asks for confirmation before it starts.
 
-**Status bar,** from left: Photos authorization, busy state (with "Keeping Mac awake" while a job runs), then mode-specific detail. On Videos pages that's the export folder's writable state and free space (from `volumeAvailableCapacityForImportantUsageKey`, falling back to `volumeAvailableCapacityKey`, hidden if neither is available). On Photos pages it's the latest run's photos rated and the count at each star. Export & Mark warns when the planned size exceeds free space.
+**Status bar,** from left: Photos authorization, busy state (with "Keeping Mac awake" while a job runs), then mode-specific detail. On Videos pages that's the export folder's writable state and free space (from `volumeAvailableCapacityForImportantUsageKey`, falling back to `volumeAvailableCapacityKey`, hidden if neither is available). Photos pages add nothing: their panel already shows the run. Export & Mark warns when the planned size exceeds free space.
 
 **Writable check.** It runs at launch, when the export folder changes and before each export job. A folder that doesn't exist yet, such as the default `~/Downloads/PhotosCleaner/Videos`, isn't an error: the page shows "Created on first export", and Export & Mark creates it just before its own check. It creates `.photoscleaner-write-test-<uuid>` in the folder, writes 1 byte, reads it back and deletes it. It doesn't inspect the filesystem type.
 
@@ -213,17 +214,17 @@ On the Settings page: **Star thresholds** and the similar-shots album name.
 
 **Star rating** (`StarRater`). Starting thresholds are −0.3, 0.0, 0.3 and 0.6: below −0.3 is 1★, −0.3 to 0.0 is 2★, 0.0 to 0.3 is 3★, 0.3 to 0.6 is 4★, and 0.6 or above is 5★. This is the app's only rating rule; similar shots get no special treatment, so a group can be all 4–5★ or all 1–2★. There is no preview, so calibrate before the first full run: in Phase 0, 20 photos from 1999–2007 scored 0.32–0.80, which the starting values would mostly rate 4★. Re-rate a short range, check the stars in Photos, adjust the thresholds on the Settings page and re-rate again; then rate the whole library. A normal run rates only unrated photos, so new thresholds reach photos rated earlier only through Re-rate.
 
-**Progress panel.** The middle of the page shows, live: the count at each star, 1★ to 5★; photos rated; existing stars overwritten (Re-rate); screenshots skipped; analyses failed; photos done of the run's total; the capture date of the latest photo analyzed; and the elapsed time. The numbers stay after the run until the next one starts. Each run logs one line in `runs.jsonl` with the same counts. Phase 4 adds the similar-shot groups and the photos added to `photo-duplicated`.
+**Progress panel.** The middle of the page shows, live: the count at each star, 1★ to 5★; photos rated; existing stars overwritten (Re-rate); screenshots skipped; analyses failed; photos done of the run's total; the capture date of the latest photo analyzed; and the elapsed time. The numbers stay after the run until the next one starts. With De-dup on it also shows "Similar shots: N groups · P photos · A added to photo-duplicated", plus how many were removed when any were. Each run logs one line in `runs.jsonl` with the same counts (`groups`, `grouped`, `addedDuplicated`, `removedDuplicated` for similar shots).
 
 **Similar shots** (Phase 4; `SequenceGrouper`, `Clusterer`). Vision feature prints reliably catch near-identical frames: the same scene seconds apart, with slight movement or exposure change. They're weaker across different crops or zoom levels, and can over-group visually similar but distinct moments. Grouping covers only the photos the current run selects — unrated ones, or every photo in the Re-rate range — and nothing about it is saved. A photo the user already rated is not grouped by a normal run. With De-dup off, no feature print is computed and the album is left alone.
 
 - **Sequences:** similar shots are retakes seconds apart, so a photo is only ever compared with photos taken within 30 s of it; two similar photos years apart are not a goal. The run walks photos newest first, and consecutive photos at most 30 s apart form a sequence; a sequence is complete when the next photo is more than 30 s older. A photo with no other photo within 30 s gets no feature print. Bursts aren't expanded (`includeAllBurstAssets = false`); Photos already manages burst picks.
-- **Streaming comparison:** each photo's print is compared with the prints of the photos within 30 s of it already seen, and union-find joins pairs at or below the distance threshold. Prints stay in memory only until their sequence is complete, then are discarded.
+- **Comparison per sequence:** the run analyzes whole sequences at a time, still 4 photos at once. Within a sequence, each photo's print is compared with the prints of the photos taken up to 30 s before it, and union-find joins pairs at or below the distance threshold. Prints live in memory only until their sequence is grouped, then are discarded. A photo whose analysis fails has no print and joins no group.
 - **Group cap:** a group holds at most 100 photos. Once a group reaches 100, it is closed and later photos in the sequence start a new group.
 - **Chain guard:** when a sequence is complete, drop any member whose distance to its group's medoid exceeds the threshold × 1.5, then re-run on what was dropped. Keep groups of 2 or more.
 - **One fixed threshold:** the distance threshold is an internal constant chosen in Phase 0 from the user's library. There is no Similarity setting; changing the constant affects only later runs.
-- **Writes per sequence:** with De-dup on, pending stars are written only when a sequence is complete, together with its album changes, so a cancelled run never splits a sequence between runs.
-- **Album sync:** add the members of the sequence's groups to `photo-duplicated`; with Re-rate, also remove the range's photos that are in no group. Remove any album member that no longer has another member within 30 s, such as the one shot left after the user deleted the rest of its group. This check uses only creation dates, so earlier groups don't need to be stored.
+- **Writes per sequence:** pending stars are written only between sequences, together with the album changes, so a cancelled run never splits a sequence between runs. A sequence longer than 20 photos is written as one batch.
+- **Album sync:** add the members of the sequence's groups to `photo-duplicated`; with Re-rate, also remove the range's analyzed photos that are in no group. A normal run never removes on grouping, because it doesn't see the rated photos a group may still hold. At the end of every run with De-dup on, cancelled or not, remove any album member that no longer has another member within 30 s, such as the one shot left after the user deleted the rest of its group. This check uses only creation dates, so earlier groups don't need to be stored.
 
 **User review in Photos.** In the library, filter by 1★ or 2★ to see the low-rated photos, or open `photo-duplicated`, where similar shots sit next to each other because the album sorts by date. Delete what you don't want. If the stars feel wrong, adjust the thresholds on the Settings page, then Re-rate that date range.
 
@@ -343,7 +344,7 @@ Build in six phases. Each ends with its acceptance criteria passing and the app 
    - Unit tests cover range boundaries (first and last day, time zone), the star rater (scores exactly on each threshold), write batching, cancellation and the hand-rated guard.
 5. **Phase 4 — Photos mode: similar shots.** De-dup checkbox, sequences over the streaming run, feature prints, grouping with group cap and chain guard, writes per sequence, `photo-duplicated` sync, similar-shot counts in the panel.
    - *Done when:* with De-dup off, no feature print is computed and the album is untouched; on a hand-labeled set of 50 similar-shot groups and 50 distinct photos at the calibrated threshold, at least 90% of the groups are found and no more than 5% of distinct photos are wrongly grouped; group members get exactly the stars the thresholds give them; a group member leaves photo-duplicated once its group dissolves.
-   - Unit tests cover the clusterer (synthetic distance matrices, chain guard), sequence splitting (30 s gaps) and the 100-photo group cap.
+   - Unit tests cover the clusterer (synthetic distance matrices, chain guard), sequence splitting (30 s gaps), the 100-photo group cap, writes that never split a sequence, Re-rate removals and lonely-member removal.
 6. **Phase 5 — Polish.** Activity filtering, error copy, keyboard shortcuts (⌘R scan, ⌘. cancel), empty states, README with setup and permissions.
 
 ## Defaults

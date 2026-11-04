@@ -6,9 +6,9 @@ struct PhotoPage: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            PhotoOptionsView(model: model).padding(16)
-            Divider()
             RatingPanel(model: model)
+            Divider()
+            PhotoOptionsView(model: model).padding(16)
             Divider()
             PhotoActionBar(model: model).padding(12)
         }
@@ -23,6 +23,12 @@ private struct PhotoOptionsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Toggle("De-dup", isOn: Binding(get: { photos.dedup }, set: { photos.dedup = $0 }))
+                    .toggleStyle(.checkbox)
+                Text("Suspected similar shots taken within 30 s of each other go to the \"\(model.settings.settings.photos.albums.duplicated.name)\" album.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
             HStack(spacing: 8) {
                 Toggle("Re-rate photos taken from", isOn: Binding(get: { photos.reRate }, set: { photos.reRate = $0 }))
                     .toggleStyle(.checkbox)
@@ -49,7 +55,7 @@ private struct PhotoOptionsView: View {
         if let error = photos.scopeError {
             Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.red)
         } else if photos.reRate {
-            Label("Every photo in this range is rated again, overwriting its existing stars. Use a short range to try new thresholds.",
+            Label("Every photo in this range is rated again, overwriting its existing stars\(photos.dedup ? ", and its similar shots are regrouped" : ""). Use a short range to try new thresholds.",
                   systemImage: "exclamationmark.triangle")
                 .foregroundStyle(.orange)
         } else {
@@ -77,6 +83,9 @@ private struct RatingPanel: View {
                     }
                 }
                 Text(ratedLine(tally)).foregroundStyle(.secondary)
+                if tally.groups > 0 || tally.removedFromAlbum > 0 || photos.dedup {
+                    Text(similarLine(tally)).foregroundStyle(.secondary)
+                }
                 Text(statusLine(tally)).font(.callout).foregroundStyle(.secondary).monospacedDigit()
                 if let notice = photos.notice {
                     Text(notice).multilineTextAlignment(.center).frame(maxWidth: 520)
@@ -99,6 +108,12 @@ private struct RatingPanel: View {
         if tally.screenshots > 0 { parts.append("\(tally.screenshots.formatted()) screenshots skipped") }
         if tally.failed > 0 { parts.append("\(tally.failed.formatted()) couldn't be analyzed") }
         return parts.joined(separator: " · ")
+    }
+
+    private func similarLine(_ tally: RatingTally) -> String {
+        var line = "Similar shots: \(tally.groups.formatted()) groups · \(tally.grouped.formatted()) photos · \(tally.addedToAlbum.formatted()) added to \(model.settings.settings.photos.albums.duplicated.name)"
+        if tally.removedFromAlbum > 0 { line += " · \(tally.removedFromAlbum.formatted()) removed" }
+        return line
     }
 
     private func statusLine(_ tally: RatingTally) -> String {
@@ -126,12 +141,12 @@ private struct PhotoActionBar: View {
             .disabled(!photos.canRun)
             .keyboardShortcut("r", modifiers: .command)
             Spacer()
-            JobProgressView(jobs: model.jobs, mode: .photos)
+            JobProgressView(jobs: model.jobs, mode: .photos, showsText: false)
         }
         .confirmationDialog("Re-rate every photo in this range?", isPresented: $confirmingReRate) {
             Button("Re-rate") { Task { await photos.run() } }
         } message: {
-            Text("Existing stars in the range are overwritten with the stars from the current thresholds.")
+            Text("Existing stars in the range are overwritten with the stars from the current thresholds." + (photos.dedup ? " Its similar shots are regrouped." : ""))
         }
     }
 }

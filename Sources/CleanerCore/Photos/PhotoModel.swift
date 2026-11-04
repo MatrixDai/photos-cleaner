@@ -8,6 +8,7 @@ public final class PhotoModel {
     public private(set) var notice: String?
     public private(set) var startedAt: Date?
     public private(set) var finishedAt: Date?
+    public var dedup = true
     public var reRate = false
     public var reRateFrom: Date
     public var reRateTo: Date
@@ -33,6 +34,9 @@ public final class PhotoModel {
     }
 
     public var scopeError: String? {
+        if dedup, duplicatesAlbum == nil {
+            return "The \"\(settings.settings.photos.albums.duplicated.name)\" album isn't set up yet; turn De-dup off or check Activity."
+        }
         do {
             _ = try scope()
             return nil
@@ -41,13 +45,16 @@ public final class PhotoModel {
         }
     }
 
+    private var duplicatesAlbum: String? { settings.settings.photos.albums.duplicated.id }
+
     public var isRunning: Bool { jobs.active?.mode == .photos }
 
     public var canRun: Bool { !jobs.isBusy && scopeError == nil }
 
     public func run() async {
         guard canRun, let scope = try? scope() else { return }
-        let rating = PhotoRatingRun(library: library, analyzer: analyzer, scope: scope, thresholds: settings.settings.photos.starThresholds)
+        let rating = PhotoRatingRun(library: library, analyzer: analyzer, scope: scope, thresholds: settings.settings.photos.starThresholds,
+                                    duplicatesAlbum: dedup ? duplicatesAlbum : nil)
         let final = LockedValue<RatingTally?>(nil)
         let report: @Sendable (RatingTally) -> Void = { [weak self] tally in
             Task { @MainActor in self?.receive(tally) }
@@ -79,7 +86,11 @@ public final class PhotoModel {
         switch outcome {
         case .completed:
             if tally?.total == 0 { return scope.isReRate ? "No photos were taken in this range." : "Every photo already has stars." }
-            return "Rated \(rated.formatted()) photos. In Photos, filter by 1★ or 2★ to review and delete the low ones."
+            var text = "Rated \(rated.formatted()) photos."
+            if let tally, tally.addedToAlbum > 0 {
+                text += " \(tally.addedToAlbum.formatted()) similar shots were added to \"\(settings.settings.photos.albums.duplicated.name)\"."
+            }
+            return text
         case .cancelled:
             return "Cancelled after rating \(rated.formatted()) photos." + (scope.isReRate ? "" : " Run again to continue with the rest.")
         case .failed(let message):
