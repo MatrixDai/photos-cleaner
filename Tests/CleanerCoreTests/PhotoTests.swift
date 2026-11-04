@@ -18,230 +18,133 @@ struct StarRaterTests {
     }
 }
 
-struct PhotoScopeTests {
+struct RatingScopeTests {
     private let shanghai = TimeZone(identifier: "Asia/Shanghai")!
-    private let utc = TimeZone(identifier: "UTC")!
-    private let now = ISO8601DateFormatter().date(from: "2026-11-03T12:00:00Z")!
+    private func date(_ text: String) -> Date { ISO8601DateFormatter().date(from: text)! }
 
-    private func range(_ from: String, _ to: String) -> PhotoScopeSetting {
-        var setting = PhotoScopeSetting()
-        setting.kind = .dateRange
-        setting.from = from
-        setting.to = to
-        return setting
+    @Test func unratedHasNoDateBounds() {
+        #expect(RatingScope.unrated.query == PhotoQuery(range: nil, unratedOnly: true))
+        #expect(RatingScope.unrated.query.contains(nil))
     }
 
-    @Test func olderThanCountsBackFromNowAndResumesAfterThePoint() throws {
-        var setting = PhotoScopeSetting()
-        setting.olderThanDays = 90
-        let resume = ISO8601DateFormatter().date(from: "2015-03-02T10:00:00Z")!
-        let scope = try PhotoScope.resolve(setting, resumeAfter: resume, now: now)
-        #expect(scope.query == PhotoQuery(lowerBound: resume, lowerInclusive: false,
-                                          upperBound: now.addingTimeInterval(-90 * 86_400), unratedOnly: true))
-        #expect(!scope.query.contains(resume))
-        #expect(scope.query.contains(resume.addingTimeInterval(0.001)))
+    @Test func reRateRunsFromMidnightToMidnightInTheTimeZone() throws {
+        let scope = try RatingScope.reRate(from: date("2026-10-01T09:00:00+08:00"), to: date("2026-10-31T23:00:00+08:00"), timeZone: shanghai)
+        let query = scope.query
+        #expect(query.range == date("2026-09-30T16:00:00Z")..<date("2026-10-31T16:00:00Z"))
+        #expect(!query.unratedOnly)
+        #expect(query.contains(date("2026-10-01T00:00:00+08:00")))
+        #expect(query.contains(date("2026-10-31T23:59:59+08:00")))
+        #expect(!query.contains(date("2026-11-01T00:00:00+08:00")))
+        #expect(!query.contains(nil))
     }
 
-    @Test func dateRangeRunsFromMidnightToMidnightInTheSystemTimeZone() throws {
-        let scope = try PhotoScope.resolve(range("2026-10-01", "2026-10-31"), resumeAfter: nil, now: now, timeZone: shanghai)
-        let start = ISO8601DateFormatter().date(from: "2026-09-30T16:00:00Z")!
-        let end = ISO8601DateFormatter().date(from: "2026-10-31T16:00:00Z")!
-        #expect(scope.query == PhotoQuery(lowerBound: start, lowerInclusive: true, upperBound: end, unratedOnly: false))
-        #expect(scope.query.contains(start))
-        #expect(scope.query.contains(end.addingTimeInterval(-1)))
-        #expect(!scope.query.contains(end))
-        #expect(!scope.query.contains(start.addingTimeInterval(-1)))
-    }
-
-    @Test func theSameRangeIsADifferentInstantInAnotherZone() throws {
-        let local = try PhotoScope.resolve(range("2026-10-01", "2026-10-01"), resumeAfter: nil, now: now, timeZone: shanghai)
-        let other = try PhotoScope.resolve(range("2026-10-01", "2026-10-01"), resumeAfter: nil, now: now, timeZone: utc)
-        #expect(local.query.lowerBound != other.query.lowerBound)
-        #expect(other.query.lowerBound == ISO8601DateFormatter().date(from: "2026-10-01T00:00:00Z"))
-    }
-
-    @Test func singleDayRangeIsAllowed() throws {
-        _ = try PhotoScope.resolve(range("2026-10-01", "2026-10-01"), resumeAfter: nil, now: now)
-    }
-
-    @Test func endBeforeStartIsRejected() {
-        #expect(throws: PhotoScopeError.endBeforeStart) {
-            try PhotoScope.resolve(range("2026-10-31", "2026-10-01"), resumeAfter: nil, now: now)
+    @Test func singleDayAndReversedRange() throws {
+        let day = date("2026-10-01T12:00:00+08:00")
+        #expect(try RatingScope.reRate(from: day, to: day, timeZone: shanghai).query.range?.lowerBound == date("2026-09-30T16:00:00Z"))
+        #expect(throws: RatingScopeError.endBeforeStart) {
+            try RatingScope.reRate(from: day, to: day.addingTimeInterval(-86_400), timeZone: shanghai)
         }
-    }
-
-    @Test func missingDatesAreRejected() {
-        var setting = PhotoScopeSetting()
-        setting.kind = .dateRange
-        #expect(throws: PhotoScopeError.missingDates) { try PhotoScope.resolve(setting, resumeAfter: nil, now: now) }
     }
 }
 
-struct PhotoScannerTests {
-    private let base = ISO8601DateFormatter().date(from: "2015-01-01T00:00:00Z")!
-    private let now = ISO8601DateFormatter().date(from: "2026-11-03T12:00:00Z")!
-
-    private func at(_ minutes: Double) -> Date { base.addingTimeInterval(minutes * 60) }
-
-    private func olderThan(after: Date? = nil) -> ResolvedPhotoScope {
-        .olderThan(days: 90, before: now.addingTimeInterval(-90 * 86_400), after: after)
-    }
-
-    private func scan(_ library: FakeLibrary, _ analyzer: FakeAnalyzer, limit: Int, scope: ResolvedPhotoScope? = nil) async throws -> PhotoScanResult {
-        try await PhotoScanner(library: library, analyzer: analyzer, limit: limit)
-            .scan(scope ?? olderThan(), context: JobContext(emit: { _ in }))
-    }
-
-    @Test func screenshotsAndNonCameraPhotosAreSkippedAndNotCounted() async throws {
-        let library = FakeLibrary(), analyzer = FakeAnalyzer()
-        library.addPhoto("shot", created: at(0), screenshot: true)
-        library.addPhoto("saved", created: at(10))
-        analyzer.notCamera("saved")
-        for index in 1...3 {
-            library.addPhoto("p\(index)", created: at(Double(20 * index)))
-            analyzer.camera("p\(index)", score: 0.1)
-        }
-        let result = try await scan(library, analyzer, limit: 2)
-        #expect(result.photos.map(\.id) == ["p1", "p2"])
-        #expect(result.screenshots == 1 && result.nonCamera == 1)
-        #expect(!analyzer.tagCalls.contains("shot"))
-        #expect(!analyzer.scoreCalls.contains("saved"))
-        #expect(result.resumeAfter == at(40))
-        #expect(!result.reachedEnd)
-    }
-
-    @Test func theLimitIsExtendedToTheEndOfTheShotSequence() async throws {
-        let library = FakeLibrary(), analyzer = FakeAnalyzer()
-        let seconds: [Double] = [0, 10, 20, 35, 200]
-        for (index, offset) in seconds.enumerated() {
-            library.addPhoto("p\(index)", created: base.addingTimeInterval(offset))
-            analyzer.camera("p\(index)", score: 0)
-        }
-        let result = try await scan(library, analyzer, limit: 2)
-        #expect(result.photos.map(\.id) == ["p0", "p1", "p2", "p3"])
-        #expect(result.resumeAfter == base.addingTimeInterval(35))
-    }
-
-    @Test func nextScanContinuesAfterTheResumePoint() async throws {
-        let library = FakeLibrary(), analyzer = FakeAnalyzer()
-        for index in 1...5 {
-            library.addPhoto("p\(index)", created: at(Double(10 * index)))
-            analyzer.camera("p\(index)", score: 0)
-        }
-        analyzer.notCamera("p2")
-        let first = try await scan(library, analyzer, limit: 2)
-        #expect(first.photos.map(\.id) == ["p1", "p3"])
-        let calls = analyzer.tagCalls.count
-        let second = try await scan(library, analyzer, limit: 2, scope: olderThan(after: first.resumeAfter))
-        #expect(second.photos.map(\.id) == ["p4", "p5"])
-        #expect(!analyzer.tagCalls.dropFirst(calls).contains("p2"))
-        #expect(second.reachedEnd)
-    }
-
-    @Test func olderThanNeverIncludesRatedPhotos() async throws {
-        let library = FakeLibrary(), analyzer = FakeAnalyzer()
-        library.addPhoto("rated", created: at(0), rating: 4)
-        library.addPhoto("unrated", created: at(10))
-        analyzer.camera("unrated", score: 0)
-        let result = try await scan(library, analyzer, limit: 10)
-        #expect(result.photos.map(\.id) == ["unrated"])
-        #expect(!analyzer.tagCalls.contains("rated"))
-    }
-
-    @Test func dateRangeIncludesRatedPhotosAndRefusesOverTheLimitBeforeScoring() async throws {
-        let library = FakeLibrary(), analyzer = FakeAnalyzer()
-        let start = ISO8601DateFormatter().date(from: "2026-10-01T00:00:00Z")!
-        for index in 0..<4 {
-            library.addPhoto("p\(index)", created: start.addingTimeInterval(Double(index) * 3600), rating: index == 0 ? 5 : 0)
-            analyzer.camera("p\(index)", score: 0.4)
-        }
-        library.addPhoto("outside", created: start.addingTimeInterval(-1))
-        let scope = ResolvedPhotoScope.dateRange(from: "2026-10-01", to: "2026-10-01", start: start, end: start.addingTimeInterval(86_400))
-
-        let refused = try await scan(library, analyzer, limit: 3, scope: scope)
-        #expect(refused.refusal != nil && refused.cameraInRange == 4 && refused.photos.isEmpty)
-        #expect(analyzer.scoreCalls.isEmpty)
-
-        let accepted = try await scan(library, analyzer, limit: 4, scope: scope)
-        #expect(accepted.photos.map(\.id) == ["p0", "p1", "p2", "p3"])
-        #expect(accepted.alreadyRated == 1)
-        #expect(!analyzer.tagCalls.contains("outside"))
-    }
-
-    @Test func aFewFailuresAreSkipped() async throws {
-        let library = FakeLibrary(), analyzer = FakeAnalyzer()
-        for index in 0..<10 {
-            library.addPhoto("p\(index)", created: at(Double(index * 10)))
-            analyzer.camera("p\(index)", score: 0)
-        }
-        analyzer.fail("p3")
-        let result = try await scan(library, analyzer, limit: 100)
-        #expect(result.failed == 1 && result.photos.count == 9)
-        #expect(result.reachedEnd && result.resumeAfter == at(90))
-    }
-
-    @Test func failingOnEveryPhotoAbortsTheScan() async throws {
-        let library = FakeLibrary(), analyzer = FakeAnalyzer()
-        for index in 0..<20 {
-            library.addPhoto("p\(index)", created: at(Double(index * 10)))
-            analyzer.fail("p\(index)")
-        }
-        await #expect(throws: PhotoScanError.self) { _ = try await scan(library, analyzer, limit: 100) }
-    }
-}
-
-struct PhotoRaterTests {
+struct PhotoRatingRunTests {
     private let base = ISO8601DateFormatter().date(from: "2015-01-01T00:00:00Z")!
     private let thresholds = [-0.3, 0.0, 0.3, 0.6]
 
-    private func result(_ photos: [(String, Double, Int)], dateRange: Bool = false) -> PhotoScanResult {
-        let scope: ResolvedPhotoScope = dateRange
-            ? .dateRange(from: "2015-01-01", to: "2015-01-01", start: base, end: base.addingTimeInterval(86_400))
-            : .olderThan(days: 90, before: .now, after: nil)
-        var result = PhotoScanResult(scope: scope)
-        result.photos = photos.map { AnalyzedPhoto(id: $0.0, date: base, score: $0.1, rating: $0.2) }
-        return result
+    private func at(_ hours: Double) -> Date { base.addingTimeInterval(hours * 3600) }
+
+    private func run(_ library: FakeLibrary, _ analyzer: FakeAnalyzer, scope: RatingScope = .unrated) async throws -> RatingTally {
+        try await PhotoRatingRun(library: library, analyzer: analyzer, scope: scope, thresholds: thresholds)
+            .run(context: JobContext(emit: { _ in }), report: { _ in })
     }
 
-    private func rate(_ library: FakeLibrary, _ scan: PhotoScanResult) async throws -> JobSummary {
-        let stars = Dictionary(uniqueKeysWithValues: scan.photos.map { ($0.id, StarRater.stars(for: $0.score, thresholds: thresholds)) })
-        return try await PhotoRater(library: library).rateAndMark(scan, stars: stars, context: JobContext(emit: { _ in }))
+    @Test func ratesUnratedPhotosNewestFirstAndSkipsScreenshots() async throws {
+        let library = FakeLibrary(), analyzer = FakeAnalyzer()
+        for index in 0..<8 {
+            library.addPhoto("p\(index)", created: at(Double(index)))
+            analyzer.score("p\(index)", index < 2 ? -0.8 : 0.4)
+        }
+        library.addPhoto("kept", created: at(10), rating: 3)
+        library.addPhoto("shot", created: at(11), screenshot: true)
+        let tally = try await run(library, analyzer)
+
+        #expect(Set(analyzer.calls.prefix(4)) == ["p7", "p6", "p5", "p4"])
+        #expect(!analyzer.calls.contains("shot") && !analyzer.calls.contains("kept"))
+        #expect(library.rating("p0") == 1 && library.rating("p7") == 4 && library.rating("kept") == 3 && library.rating("shot") == 0)
+        #expect(tally.stars == [1: 2, 2: 0, 3: 0, 4: 6, 5: 0])
+        #expect(tally.total == 9 && tally.processed == 9 && tally.screenshots == 1 && tally.written == 8)
+        #expect(tally.currentDate == at(0))
     }
 
-    @Test func writesStarsAndTouchesNoAlbum() async throws {
-        let library = FakeLibrary()
-        for id in ["a", "b", "c"] { library.addPhoto(id, created: base) }
-        let summary = try await rate(library, result([("a", -0.5, 0), ("b", -0.1, 0), ("c", 0.7, 0)]))
-        #expect([library.rating("a"), library.rating("b"), library.rating("c")] == [1, 2, 5])
-        #expect(summary.counts["rated"] == 3 && summary.counts["stars1"] == 1 && summary.counts["stars5"] == 1)
-        #expect(library.addBatches.isEmpty)
+    @Test func starsAreWrittenInBatchesOf20() async throws {
+        let library = FakeLibrary(), analyzer = FakeAnalyzer()
+        for index in 0..<45 { library.addPhoto("p\(index)", created: at(Double(index))) }
+        _ = try await run(library, analyzer)
+        #expect(library.ratingBatches.map(\.count) == [20, 20, 5])
     }
 
-    @Test func olderThanNeverChangesARatingSetSinceTheScan() async throws {
-        let library = FakeLibrary()
-        library.addPhoto("a", created: base)
-        library.setPhotoRating("a", 4)
-        let summary = try await rate(library, result([("a", -0.9, 0)]))
-        #expect(library.rating("a") == 4)
-        #expect(summary.counts["rated"] == 0)
+    @Test func aSecondRunFindsNothingLeft() async throws {
+        let library = FakeLibrary(), analyzer = FakeAnalyzer()
+        library.addPhoto("p", created: at(0))
+        _ = try await run(library, analyzer)
+        let second = try await run(library, analyzer)
+        #expect(second.total == 0 && analyzer.calls == ["p"])
     }
 
-    @Test func dateRangeOverwritesExistingStars() async throws {
-        let library = FakeLibrary()
-        library.addPhoto("a", created: base, rating: 1)
-        library.addPhoto("b", created: base, rating: 5)
-        library.addPhoto("same", created: base, rating: 4)
-        let summary = try await rate(library, result([("a", 0.4, 1), ("b", -0.2, 5), ("same", 0.4, 4)], dateRange: true))
-        #expect(library.rating("a") == 4 && library.rating("b") == 2 && library.rating("same") == 4)
-        #expect(summary.counts["overwritten"] == 2 && summary.counts["rated"] == 2)
+    @Test func aPhotoRatedByHandDuringTheRunIsLeftAlone() async throws {
+        let library = FakeLibrary(), analyzer = FakeAnalyzer()
+        library.addPhoto("p", created: at(0))
+        analyzer.score("p", -0.8)
+        analyzer.onScore = { _ in library.setPhotoRating("p", 5) }
+        let tally = try await run(library, analyzer)
+        #expect(library.rating("p") == 5 && tally.written == 0 && tally.rated == 0)
     }
 
-    @Test func ratingsAreWrittenInBatchesOf200() async throws {
-        let library = FakeLibrary()
-        let photos = (0..<450).map { ("p\($0)", 0.4, 0) }
-        for photo in photos { library.addPhoto(photo.0, created: base) }
-        _ = try await rate(library, result(photos))
-        #expect(library.ratingBatches.map(\.count) == [200, 200, 50])
+    @Test func reRateOverwritesOnlyInsideTheRange() async throws {
+        let library = FakeLibrary(), analyzer = FakeAnalyzer()
+        library.addPhoto("before", created: at(-30), rating: 5)
+        library.addPhoto("inside", created: at(1), rating: 5)
+        library.addPhoto("same", created: at(2), rating: 4)
+        library.addPhoto("new", created: at(3))
+        for id in ["before", "inside", "same", "new"] { analyzer.score(id, 0.4) }
+        let scope = try RatingScope.reRate(from: base, to: base, timeZone: TimeZone(identifier: "UTC")!)
+        let tally = try await run(library, analyzer, scope: scope)
+        #expect(library.rating("before") == 5 && library.rating("inside") == 4 && library.rating("new") == 4)
+        #expect(tally.rated == 3 && tally.written == 2 && tally.overwritten == 1)
+    }
+
+    @Test func failuresStayUnratedAndAreRetriedNextRun() async throws {
+        let library = FakeLibrary(), analyzer = FakeAnalyzer()
+        for index in 0..<5 { library.addPhoto("p\(index)", created: at(Double(index))) }
+        analyzer.fail("p2")
+        let first = try await run(library, analyzer)
+        #expect(first.failed == 1 && first.rated == 4 && library.rating("p2") == 0)
+
+        analyzer.heal("p2")
+        let second = try await run(library, analyzer)
+        #expect(second.total == 1 && library.rating("p2") == 3)
+    }
+
+    @Test func failingOnEveryPhotoAbortsTheRun() async throws {
+        let library = FakeLibrary(), analyzer = FakeAnalyzer()
+        for index in 0..<20 {
+            library.addPhoto("p\(index)", created: at(Double(index)))
+            analyzer.fail("p\(index)")
+        }
+        await #expect(throws: PhotoRatingError.self) { try await run(library, analyzer) }
+        #expect(analyzer.calls.count == PhotoRatingRun.abortAfterFailures)
+    }
+
+    @Test func cancellingKeepsTheStarsAlreadyScored() async throws {
+        let library = FakeLibrary(), analyzer = FakeAnalyzer()
+        for index in 0..<40 { library.addPhoto("p\(index)", created: at(Double(index))) }
+        let task = LockedValue<Task<RatingTally, any Error>?>(nil)
+        analyzer.onScore = { id in if id == "p27" { task.get()?.cancel() } }
+        let started = Task { try await run(library, analyzer) }
+        task.set(started)
+        let tally = try await started.value
+        #expect(tally.rated == 12 && tally.written == 12)
+        #expect(library.rating("p39") == 3 && library.rating("p28") == 3 && library.rating("p27") == 0)
     }
 }
 
@@ -251,104 +154,47 @@ struct PhotoModelTests {
         let model = try AppModel(dataDirectory: temporaryDirectory(), library: library, keepAwake: FakeKeepAwake(),
                                  settingsDebounce: .milliseconds(1), analyzer: analyzer)
         await model.launch()
-        model.settings.update { $0.photos.cameraPhotosPerRun = 100 }
         return model
     }
 
-    @Test func rateAndMarkMovesTheResumePointAndStartOverResetsIt() async throws {
+    @Test func runShowsTheTallyAndLogsTheRun() async throws {
         let library = FakeLibrary(), analyzer = FakeAnalyzer()
-        let old = Date.now.addingTimeInterval(-400 * 86_400)
-        for index in 0..<3 {
-            library.addPhoto("p\(index)", created: old.addingTimeInterval(Double(index) * 3600))
-            analyzer.camera("p\(index)", score: index == 0 ? -0.8 : 0.5)
-        }
+        library.addPhoto("good", created: .now.addingTimeInterval(-3600))
+        library.addPhoto("bad", created: .now.addingTimeInterval(-7200))
+        analyzer.score("good", 0.7)
+        analyzer.score("bad", -0.8)
         let model = try await model(library, analyzer)
-        await model.photos.scan()
-        #expect(model.photos.photosToRate.count == 3)
-        await model.photos.rateAndMark()
-        #expect(model.settings.settings.photos.resumeAfter == old.addingTimeInterval(2 * 3600))
-        #expect(library.rating("p0") == 1 && library.rating("p1") == 4)
+        await model.photos.run()
 
-        await model.photos.scan()
-        #expect(model.photos.photosToRate.isEmpty)
-        #expect(model.photos.notice?.hasPrefix("No more unrated photos") == true)
+        #expect(model.photos.tally?.stars[5] == 1 && model.photos.tally?.stars[1] == 1)
+        #expect(model.photos.notice?.hasPrefix("Rated 2 photos") == true)
+        await model.refreshActivity()
+        #expect(model.runs.first?.counts["rated"] == 2 && model.runs.first?.counts["stars5"] == 1)
 
-        library.setPhotoRating("p1", 0)
-        model.photos.startOver()
-        #expect(model.settings.settings.photos.resumeAfter == nil)
-        await model.photos.scan()
-        #expect(model.photos.photosToRate.map(\.id) == ["p1"])
+        await model.photos.run()
+        #expect(model.photos.notice == "Every photo already has stars.")
     }
 
-    @Test func invalidRangeDisablesScan() async throws {
-        let model = try await model(FakeLibrary(), FakeAnalyzer())
-        model.settings.update {
-            $0.photos.scope.kind = .dateRange
-            $0.photos.scope.from = "2026-10-31"
-            $0.photos.scope.to = "2026-10-01"
-        }
-        #expect(!model.photos.canScan)
-        #expect(model.photos.scopeError == PhotoScopeError.endBeforeStart.localizedDescription)
-    }
-
-    @Test func dateRangeRunWithNewThresholdsUpdatesStarsAndKeepsTheResumePoint() async throws {
+    @Test func thresholdsFromSettingsAreUsed() async throws {
         let library = FakeLibrary(), analyzer = FakeAnalyzer()
-        let day = ISO8601DateFormatter().date(from: "2025-06-10T08:00:00Z")!
-        library.addPhoto("p", created: day, rating: 4)
-        analyzer.camera("p", score: 0.4)
+        library.addPhoto("p", created: .now)
+        analyzer.score("p", 0.4)
         let model = try await model(library, analyzer)
-        let resume = Date(timeIntervalSince1970: 1_000_000)
-        model.settings.update {
-            $0.photos.resumeAfter = resume
-            $0.photos.starThresholds = [0.5, 0.6, 0.7, 0.8]
-            $0.photos.scope.kind = .dateRange
-            $0.photos.scope.from = "2025-06-09"
-            $0.photos.scope.to = "2025-06-11"
-        }
-        await model.photos.scan()
-        #expect(model.photos.scan?.alreadyRated == 1)
-        await model.photos.rateAndMark()
+        model.settings.update { $0.photos.starThresholds = [0.5, 0.6, 0.7, 0.8] }
+        await model.photos.run()
         #expect(library.rating("p") == 1)
-        #expect(model.settings.settings.photos.resumeAfter == resume)
     }
 
-    @Test func adjustedStarsAreWrittenAndCountedLive() async throws {
-        let library = FakeLibrary(), analyzer = FakeAnalyzer()
-        let old = Date.now.addingTimeInterval(-400 * 86_400)
-        library.addPhoto("good", created: old)
-        library.addPhoto("bad", created: old.addingTimeInterval(3600))
-        analyzer.camera("good", score: 0.7)
-        analyzer.camera("bad", score: -0.8)
-        let model = try await model(library, analyzer)
-        await model.photos.scan()
-        let good = try #require(model.photos.photosToRate.first { $0.id == "good" })
-        let bad = try #require(model.photos.photosToRate.first { $0.id == "bad" })
-        #expect(model.photos.starCounts[5] == 1 && model.photos.starCounts[1] == 1)
-
-        model.photos.setStars(2, for: good)
-        model.photos.setStars(4, for: bad)
-        #expect(model.photos.isAdjusted(good) && model.photos.adjustedCount == 2)
-        #expect(model.photos.starCounts[5] == 0 && model.photos.starCounts[2] == 1 && model.photos.starCounts[4] == 1)
-
-        model.photos.setStars(4, for: bad)
-        model.photos.setStars(1, for: bad)
-        #expect(!model.photos.isAdjusted(bad) && model.photos.adjustedCount == 1)
-        model.photos.setStars(4, for: bad)
-
-        await model.photos.rateAndMark()
-        #expect(library.rating("good") == 2 && library.rating("bad") == 4)
-        #expect(model.photos.adjustedCount == 0)
-        #expect(await eventually { model.runs.first?.counts["adjusted"] == 2 })
-    }
-
-    @Test func adjustmentsAreDroppedByANewScan() async throws {
-        let library = FakeLibrary(), analyzer = FakeAnalyzer()
-        library.addPhoto("p", created: Date.now.addingTimeInterval(-400 * 86_400))
-        analyzer.camera("p", score: 0.7)
-        let model = try await model(library, analyzer)
-        await model.photos.scan()
-        model.photos.setStars(1, for: try #require(model.photos.photosToRate.first))
-        await model.photos.scan()
-        #expect(model.photos.adjustedCount == 0)
+    @Test func reRateDefaultsToTheLastMonthAndRejectsAReversedRange() async throws {
+        let model = try await model(FakeLibrary(), FakeAnalyzer())
+        let days = Calendar.current.dateComponents([.day], from: model.photos.reRateFrom, to: model.photos.reRateTo).day ?? 0
+        #expect((28...31).contains(days))
+        model.photos.reRate = true
+        #expect(model.photos.canRun)
+        model.photos.reRateFrom = model.photos.reRateTo.addingTimeInterval(86_400)
+        #expect(!model.photos.canRun)
+        #expect(model.photos.scopeError == RatingScopeError.endBeforeStart.localizedDescription)
+        model.photos.reRate = false
+        #expect(model.photos.canRun)
     }
 }

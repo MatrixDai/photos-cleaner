@@ -62,28 +62,6 @@ public struct VideoSettings: Codable, Equatable, Sendable {
     }
 }
 
-public struct PhotoScopeSetting: Codable, Equatable, Sendable {
-    public enum Kind: String, Codable, Sendable {
-        case olderThan, dateRange
-    }
-
-    public var kind = Kind.olderThan
-    public var olderThanDays = 90
-    public var from: String?
-    public var to: String?
-
-    public init() {}
-
-    public init(from decoder: any Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        let defaults = PhotoScopeSetting()
-        kind = container.value(.kind, default: defaults.kind)
-        olderThanDays = container.value(.olderThanDays, default: defaults.olderThanDays).clamped(to: VideoSettings.olderThanDaysRange)
-        from = container.value(.from, default: defaults.from)
-        to = container.value(.to, default: defaults.to)
-    }
-}
-
 public struct PhotoAlbums: Codable, Equatable, Sendable {
     public var duplicated = AlbumRef(name: "photo-duplicated")
 
@@ -97,12 +75,7 @@ public struct PhotoAlbums: Codable, Equatable, Sendable {
 }
 
 public struct PhotoSettings: Codable, Equatable, Sendable {
-    public static let cameraPhotosPerRunRange = 10...1_000
-
-    public var scope = PhotoScopeSetting()
     public var starThresholds = [-0.3, 0.0, 0.3, 0.6]
-    public var cameraPhotosPerRun = 100
-    public var resumeAfter: Date?
     public var albums = PhotoAlbums()
 
     public init() {}
@@ -110,13 +83,9 @@ public struct PhotoSettings: Codable, Equatable, Sendable {
     public init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let defaults = PhotoSettings()
-        scope = container.value(.scope, default: defaults.scope)
         let thresholds = container.value(.starThresholds, default: defaults.starThresholds)
         starThresholds = thresholds.count == defaults.starThresholds.count && thresholds == thresholds.sorted()
             ? thresholds : defaults.starThresholds
-        cameraPhotosPerRun = container.value(.cameraPhotosPerRun, default: defaults.cameraPhotosPerRun)
-            .clamped(to: Self.cameraPhotosPerRunRange)
-        resumeAfter = container.value(.resumeAfter, default: defaults.resumeAfter)
         albums = container.value(.albums, default: defaults.albums)
     }
 }

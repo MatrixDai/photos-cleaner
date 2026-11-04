@@ -34,10 +34,6 @@ struct SettingsPage: View {
             }
 
             Section("Photos") {
-                LabeledContent("Camera photos per run") {
-                    TextField("", value: clamped(\.photos.cameraPhotosPerRun, PhotoSettings.cameraPhotosPerRunRange), format: .number)
-                        .frame(width: 100).multilineTextAlignment(.trailing)
-                }
                 LabeledContent("Star thresholds") {
                     HStack {
                         ForEach(0..<4, id: \.self) { index in
@@ -106,11 +102,6 @@ struct SettingsPage: View {
     private func binding<Value>(_ keyPath: WritableKeyPath<AppSettings, Value>) -> Binding<Value> {
         Binding(get: { model.settings.settings[keyPath: keyPath] },
                 set: { value in model.settings.update { $0[keyPath: keyPath] = value } })
-    }
-
-    private func clamped(_ keyPath: WritableKeyPath<AppSettings, Int>, _ range: ClosedRange<Int>) -> Binding<Int> {
-        Binding(get: { model.settings.settings[keyPath: keyPath] },
-                set: { value in model.settings.update { $0[keyPath: keyPath] = min(max(value, range.lowerBound), range.upperBound) } })
     }
 
     private func threshold(_ index: Int) -> Binding<Double> {

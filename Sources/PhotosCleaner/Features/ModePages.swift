@@ -6,9 +6,9 @@ struct PhotoPage: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            PhotoScopeView(model: model).padding(16)
+            PhotoOptionsView(model: model).padding(16)
             Divider()
-            PhotoResults(model: model)
+            RatingPanel(model: model)
             Divider()
             PhotoActionBar(model: model).padding(12)
         }
@@ -16,98 +16,122 @@ struct PhotoPage: View {
     }
 }
 
-private struct PhotoScopeView: View {
+private struct PhotoOptionsView: View {
     let model: AppModel
 
-    private var scope: PhotoScopeSetting { model.settings.settings.photos.scope }
+    private var photos: PhotoModel { model.photos }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            radio(.olderThan) {
-                Text("Older than")
-                TextField("", value: days, format: .number).frame(width: 70)
-                Stepper("days", value: days, in: VideoSettings.olderThanDaysRange)
+            HStack(spacing: 8) {
+                Toggle("Re-rate photos taken from", isOn: Binding(get: { photos.reRate }, set: { photos.reRate = $0 }))
+                    .toggleStyle(.checkbox)
+                HStack(spacing: 8) {
+                    DatePicker("", selection: Binding(get: { photos.reRateFrom }, set: { photos.reRateFrom = $0 }),
+                               displayedComponents: .date).labelsHidden()
+                    Text("to")
+                    DatePicker("", selection: Binding(get: { photos.reRateTo }, set: { photos.reRateTo = $0 }),
+                               displayedComponents: .date).labelsHidden()
+                }
+                .opacity(photos.reRate ? 1 : 0.45)
+                .disabled(!photos.reRate)
             }
-            radio(.dateRange) {
-                Text("Taken from")
-                DatePicker("", selection: date(\.from, fallback: defaultFrom), displayedComponents: .date).labelsHidden()
-                Text("to")
-                DatePicker("", selection: date(\.to, fallback: .now), displayedComponents: .date).labelsHidden()
-            }
+            .fixedSize()
             infoLine
                 .font(.caption)
                 .frame(maxWidth: .infinity, minHeight: 32, alignment: .topLeading)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .disabled(model.jobs.isBusy)
-        .onChange(of: scope) { model.photos.scopeChanged() }
-    }
-
-    private func radio(_ value: PhotoScopeSetting.Kind, @ViewBuilder content: () -> some View) -> some View {
-        HStack(spacing: 8) {
-            Button { kind.wrappedValue = value } label: {
-                Image(systemName: scope.kind == value ? "largecircle.fill.circle" : "circle")
-                    .foregroundStyle(scope.kind == value ? Color.accentColor : .secondary)
-            }
-            .buttonStyle(.plain)
-            HStack(spacing: 8) { content() }
-                .opacity(scope.kind == value ? 1 : 0.45)
-                .disabled(scope.kind != value)
-        }
-        .fixedSize()
     }
 
     @ViewBuilder private var infoLine: some View {
-        if scope.kind == .olderThan {
-            HStack {
-                Text(model.settings.settings.photos.resumeAfter.map { "Continuing after \($0.formatted(date: .abbreviated, time: .shortened))" }
-                    ?? "Starting from the oldest unrated photo")
-                if model.settings.settings.photos.resumeAfter != nil {
-                    Button("Start Over") { model.photos.startOver() }.buttonStyle(.link)
-                }
-            }
-            .foregroundStyle(.secondary)
-        } else if let error = model.photos.scopeError {
+        if let error = photos.scopeError {
             Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.red)
+        } else if photos.reRate {
+            Label("Every photo in this range is rated again, overwriting its existing stars. Use a short range to try new thresholds.",
+                  systemImage: "exclamationmark.triangle")
+                .foregroundStyle(.orange)
         } else {
-            Label("A date range re-rates every photo in it, overwriting existing stars, and regroups its similar shots.",
+            Label("Rates every photo without stars, newest first. Photos that already have stars are left alone.",
                   systemImage: "info.circle")
                 .foregroundStyle(.secondary)
         }
     }
+}
 
-    private var defaultFrom: Date { Calendar.current.date(byAdding: .month, value: -1, to: .now)! }
+private struct RatingPanel: View {
+    let model: AppModel
 
-    private var kind: Binding<PhotoScopeSetting.Kind> {
-        Binding(get: { scope.kind }, set: { kind in
-            model.settings.update {
-                $0.photos.scope.kind = kind
-                if kind == .dateRange {
-                    $0.photos.scope.from = $0.photos.scope.from ?? Self.day(defaultFrom)
-                    $0.photos.scope.to = $0.photos.scope.to ?? Self.day(.now)
+    private var photos: PhotoModel { model.photos }
+
+    var body: some View {
+        if let tally = photos.tally {
+            VStack(spacing: 16) {
+                HStack(spacing: 28) {
+                    ForEach(1...5, id: \.self) { stars in
+                        VStack(spacing: 4) {
+                            Text(String(repeating: "★", count: stars)).foregroundStyle(.yellow)
+                            Text((tally.stars[stars] ?? 0).formatted()).font(.title2).monospacedDigit()
+                        }
+                    }
+                }
+                Text(ratedLine(tally)).foregroundStyle(.secondary)
+                Text(statusLine(tally)).font(.callout).foregroundStyle(.secondary).monospacedDigit()
+                if let notice = photos.notice {
+                    Text(notice).multilineTextAlignment(.center).frame(maxWidth: 520)
                 }
             }
-        })
+            .padding(24)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            ContentUnavailableView {
+                Label("Nothing rated yet", systemImage: "star.leadinghalf.filled")
+            } description: {
+                Text(photos.notice ?? "Rate scores each photo with Vision and writes its stars as it goes. Cancel any time; the next run continues with the photos still unrated.")
+            }
+        }
     }
 
-    private var days: Binding<Int> {
-        let range = VideoSettings.olderThanDaysRange
-        return Binding(get: { scope.olderThanDays },
-                       set: { value in model.settings.update { $0.photos.scope.olderThanDays = min(max(value, range.lowerBound), range.upperBound) } })
+    private func ratedLine(_ tally: RatingTally) -> String {
+        var parts = ["\(tally.rated.formatted()) rated"]
+        if tally.overwritten > 0 { parts.append("\(tally.overwritten.formatted()) existing stars overwritten") }
+        if tally.screenshots > 0 { parts.append("\(tally.screenshots.formatted()) screenshots skipped") }
+        if tally.failed > 0 { parts.append("\(tally.failed.formatted()) couldn't be analyzed") }
+        return parts.joined(separator: " · ")
     }
 
-    private func date(_ keyPath: WritableKeyPath<PhotoScopeSetting, String?>, fallback: Date) -> Binding<Date> {
-        Binding(get: { scope[keyPath: keyPath].flatMap(Self.parse) ?? fallback },
-                set: { value in model.settings.update { $0.photos.scope[keyPath: keyPath] = Self.day(value) } })
+    private func statusLine(_ tally: RatingTally) -> String {
+        var parts = ["\(tally.processed.formatted()) of \(tally.total.formatted()) photos"]
+        if let date = tally.currentDate { parts.append("now at \(date.formatted(date: .abbreviated, time: .omitted))") }
+        if let started = photos.startedAt {
+            parts.append(Duration.seconds((photos.finishedAt ?? .now).timeIntervalSince(started))
+                .formatted(.time(pattern: .hourMinuteSecond)))
+        }
+        return parts.joined(separator: " · ")
     }
+}
 
-    private static let dayFormat = Date.ISO8601FormatStyle(timeZone: .current).year().month().day().dateSeparator(.dash)
+private struct PhotoActionBar: View {
+    let model: AppModel
+    @State private var confirmingReRate = false
 
-    private static func day(_ date: Date) -> String {
-        date.formatted(dayFormat)
-    }
+    private var photos: PhotoModel { model.photos }
 
-    private static func parse(_ day: String) -> Date? {
-        try? dayFormat.parse(day)
+    var body: some View {
+        HStack {
+            Button("Rate Photos") {
+                if photos.reRate { confirmingReRate = true } else { Task { await photos.run() } }
+            }
+            .disabled(!photos.canRun)
+            .keyboardShortcut("r", modifiers: .command)
+            Spacer()
+            JobProgressView(jobs: model.jobs, mode: .photos)
+        }
+        .confirmationDialog("Re-rate every photo in this range?", isPresented: $confirmingReRate) {
+            Button("Re-rate") { Task { await photos.run() } }
+        } message: {
+            Text("Existing stars in the range are overwritten with the stars from the current thresholds.")
+        }
     }
 }

@@ -1,4 +1,3 @@
-import CoreGraphics
 import CryptoKit
 import Foundation
 @testable import CleanerCore
@@ -61,11 +60,8 @@ final class FakeLibrary: PhotoLibraryService, @unchecked Sendable {
 
     func photos(_ query: PhotoQuery) async -> [LibraryPhoto] {
         lock.withLock {
-            _photos.filter { photo in
-                guard let date = photo.creationDate, query.contains(date) else { return false }
-                return !query.unratedOnly || photo.rating == 0
-            }
-            .sorted { $0.creationDate! < $1.creationDate! }
+            _photos.filter { query.contains($0.creationDate) && (!query.unratedOnly || $0.rating == 0) }
+                .sorted { ($0.creationDate ?? .distantPast) > ($1.creationDate ?? .distantPast) }
         }
     }
 
@@ -74,8 +70,6 @@ final class FakeLibrary: PhotoLibraryService, @unchecked Sendable {
             Dictionary(uniqueKeysWithValues: _photos.filter { ids.contains($0.id) }.map { ($0.id, $0.rating) })
         }
     }
-
-    func image(for photoID: String, side: Int) async -> CGImage? { nil }
 
     func setRatings(_ ratings: [String: Int]) async throws {
         lock.withLock {
@@ -237,29 +231,21 @@ func eventually(timeout: Duration = .seconds(5), _ condition: () async -> Bool) 
 final class FakeAnalyzer: PhotoAnalyzing, @unchecked Sendable {
     private let lock = NSLock()
     private var scores: [String: Double] = [:]
-    private var nonCamera: Set<String> = []
     private var failing: Set<String> = []
-    private var _tagCalls: [String] = []
-    private var _scoreCalls: [String] = []
+    private var _calls: [String] = []
+    var onScore: (@Sendable (String) -> Void)?
 
-    var tagCalls: [String] { lock.withLock { _tagCalls } }
-    var scoreCalls: [String] { lock.withLock { _scoreCalls } }
+    var calls: [String] { lock.withLock { _calls } }
 
-    func camera(_ id: String, score: Double) { lock.withLock { scores[id] = score } }
-    func notCamera(_ id: String) { lock.withLock { _ = nonCamera.insert(id) } }
+    func score(_ id: String, _ score: Double) { lock.withLock { scores[id] = score } }
     func fail(_ id: String) { lock.withLock { _ = failing.insert(id) } }
-
-    func cameraTags(_ photoID: String) async throws -> CameraTags {
-        try lock.withLock {
-            _tagCalls.append(photoID)
-            if failing.contains(photoID) { throw FakeError(message: "iCloud download failed") }
-            return nonCamera.contains(photoID) ? CameraTags(make: nil, model: nil) : CameraTags(make: "Apple", model: "iPhone")
-        }
-    }
+    func heal(_ id: String) { lock.withLock { _ = failing.remove(id) } }
 
     func aestheticsScore(_ photoID: String) async throws -> Double {
-        lock.withLock {
-            _scoreCalls.append(photoID)
+        onScore?(photoID)
+        return try lock.withLock {
+            _calls.append(photoID)
+            if failing.contains(photoID) { throw FakeError(message: "iCloud download failed") }
             return scores[photoID] ?? 0
         }
     }
