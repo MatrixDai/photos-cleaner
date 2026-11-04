@@ -1,4 +1,3 @@
-import CoreGraphics
 import Foundation
 
 public enum LibraryAuthorization: Sendable, Equatable {
@@ -18,29 +17,24 @@ public protocol PhotoLibraryService: Sendable {
     func removeAssets(_ ids: [String], fromAlbum albumID: String) async throws
     func videos(createdBefore cutoff: Date) async -> [LibraryVideo]
     func resourceData(assetID: String, kind: LibraryVideoResource.Kind) -> AsyncThrowingStream<Data, any Error>
+    /// Newest first.
     func photos(_ query: PhotoQuery) async -> [LibraryPhoto]
     func ratings(of ids: [String]) async -> [String: Int]
     func setRatings(_ ratings: [String: Int]) async throws
-    func image(for photoID: String, side: Int) async -> CGImage?
 }
 
 public struct PhotoQuery: Equatable, Sendable {
-    public var lowerBound: Date?
-    public var lowerInclusive: Bool
-    public var upperBound: Date
+    public var range: Range<Date>?
     public var unratedOnly: Bool
 
-    public init(lowerBound: Date?, lowerInclusive: Bool, upperBound: Date, unratedOnly: Bool) {
-        self.lowerBound = lowerBound
-        self.lowerInclusive = lowerInclusive
-        self.upperBound = upperBound
+    public init(range: Range<Date>?, unratedOnly: Bool) {
+        self.range = range
         self.unratedOnly = unratedOnly
     }
 
-    public func contains(_ date: Date) -> Bool {
-        guard date < upperBound else { return false }
-        guard let lowerBound else { return true }
-        return lowerInclusive ? date >= lowerBound : date > lowerBound
+    public func contains(_ date: Date?) -> Bool {
+        guard let range else { return true }
+        return date.map(range.contains) ?? false
     }
 }
 

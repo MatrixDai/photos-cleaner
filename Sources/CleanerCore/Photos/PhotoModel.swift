@@ -1,13 +1,16 @@
-import CoreGraphics
 import Foundation
 import Observation
 
 @MainActor
 @Observable
 public final class PhotoModel {
-    public private(set) var scan: PhotoScanResult?
+    public private(set) var tally: RatingTally?
     public private(set) var notice: String?
-    public private(set) var adjustedStars: [String: Int] = [:]
+    public private(set) var startedAt: Date?
+    public private(set) var finishedAt: Date?
+    public var reRate = false
+    public var reRateFrom: Date
+    public var reRateTo: Date
 
     @ObservationIgnored private let settings: SettingsStore
     @ObservationIgnored private let jobs: JobCenter
@@ -24,120 +27,67 @@ public final class PhotoModel {
         self.analyzer = analyzer
         self.now = now
         self.timeZone = timeZone
+        let today = now()
+        reRateTo = today
+        reRateFrom = Calendar.current.date(byAdding: .month, value: -1, to: today) ?? today
     }
-
-    public var thresholds: [Double] { settings.settings.photos.starThresholds }
 
     public var scopeError: String? {
         do {
-            _ = try resolvedScope()
+            _ = try scope()
             return nil
         } catch {
             return error.localizedDescription
         }
     }
 
-    public var canScan: Bool { !jobs.isBusy && scopeError == nil }
+    public var isRunning: Bool { jobs.active?.mode == .photos }
 
-    public var photosToRate: [AnalyzedPhoto] {
-        guard let scan, scan.refusal == nil else { return [] }
-        return scan.scope.isDateRange ? scan.photos : scan.photos.filter { $0.rating == 0 }
-    }
+    public var canRun: Bool { !jobs.isBusy && scopeError == nil }
 
-    public var canRate: Bool { !jobs.isBusy && !photosToRate.isEmpty }
-
-    public func suggestedStars(_ photo: AnalyzedPhoto) -> Int {
-        StarRater.stars(for: photo.score, thresholds: thresholds)
-    }
-
-    public func stars(_ photo: AnalyzedPhoto) -> Int {
-        adjustedStars[photo.id] ?? suggestedStars(photo)
-    }
-
-    public func isAdjusted(_ photo: AnalyzedPhoto) -> Bool {
-        adjustedStars[photo.id] != nil
-    }
-
-    /// Setting a photo back to its suggestion drops the adjustment, so later threshold changes apply to it again.
-    public func setStars(_ stars: Int, for photo: AnalyzedPhoto) {
-        guard (1...5).contains(stars) else { return }
-        adjustedStars[photo.id] = stars == suggestedStars(photo) ? nil : stars
-    }
-
-    public var adjustedCount: Int {
-        photosToRate.filter { adjustedStars[$0.id] != nil }.count
-    }
-
-    public var starCounts: [Int: Int] {
-        var counts = Dictionary(uniqueKeysWithValues: (1...5).map { ($0, 0) })
-        for photo in photosToRate { counts[stars(photo), default: 0] += 1 }
-        return counts
-    }
-
-    public func image(_ photo: AnalyzedPhoto, side: Int) async -> CGImage? {
-        await library.image(for: photo.id, side: side)
-    }
-
-
-    public func scan() async {
+    public func run() async {
+        guard canRun, let scope = try? scope() else { return }
+        let rating = PhotoRatingRun(library: library, analyzer: analyzer, scope: scope, thresholds: settings.settings.photos.starThresholds)
+        let final = LockedValue<RatingTally?>(nil)
+        let report: @Sendable (RatingTally) -> Void = { [weak self] tally in
+            Task { @MainActor in self?.receive(tally) }
+        }
+        tally = nil
         notice = nil
-        adjustedStars = [:]
-        guard let scope = try? resolvedScope() else { return }
-        let scanner = PhotoScanner(library: library, analyzer: analyzer, limit: settings.settings.photos.cameraPhotosPerRun)
-        let found = LockedValue<PhotoScanResult?>(nil)
-        let finished = await jobs.run(mode: .photos, name: "scan") { context in
-            let result = try await scanner.scan(scope, context: context)
-            found.set(result)
-            return JobSummary(scope: scope.label, counts: [
-                "camera": result.photos.count, "nonCamera": result.nonCamera, "screenshots": result.screenshots,
-                "failed": result.failed, "alreadyRated": result.alreadyRated,
-            ])
+        startedAt = now()
+        finishedAt = nil
+        let finished = await jobs.run(mode: .photos, name: "rate") { context in
+            let tally = try await rating.run(context: context) { tally in
+                final.set(tally)
+                report(tally)
+            }
+            return JobSummary(scope: scope.label, counts: tally.counts)
         }
-        guard let finished, case .completed = finished.outcome, let result = found.get() else {
-            if let finished, case .failed(let message) = finished.outcome { notice = message }
-            return
-        }
-        scan = result
-        if let refusal = result.refusal {
-            notice = refusal
-        } else if result.photos.isEmpty {
-            notice = scope.isDateRange ? "No camera photos in this range."
-                : "No more unrated photos older than \(settings.settings.photos.scope.olderThanDays) days."
+        finishedAt = now()
+        tally = final.get() ?? tally
+        guard let finished else { return }
+        notice = message(for: finished.outcome, scope: scope)
+    }
+
+    private func receive(_ update: RatingTally) {
+        guard isRunning, update.processed >= (tally?.processed ?? 0) else { return }
+        tally = update
+    }
+
+    private func message(for outcome: JobOutcome, scope: RatingScope) -> String {
+        let rated = tally?.rated ?? 0
+        switch outcome {
+        case .completed:
+            if tally?.total == 0 { return scope.isReRate ? "No photos were taken in this range." : "Every photo already has stars." }
+            return "Rated \(rated.formatted()) photos. In Photos, filter by 1★ or 2★ to review and delete the low ones."
+        case .cancelled:
+            return "Cancelled after rating \(rated.formatted()) photos." + (scope.isReRate ? "" : " Run again to continue with the rest.")
+        case .failed(let message):
+            return message
         }
     }
 
-    public func rateAndMark() async {
-        guard let scan, canRate else { return }
-        let stars = Dictionary(uniqueKeysWithValues: photosToRate.map { ($0.id, self.stars($0)) })
-        let adjusted = adjustedCount
-        let rater = PhotoRater(library: library)
-        let finished = await jobs.run(mode: .photos, name: "rate & mark") { context in
-            var summary = try await rater.rateAndMark(scan, stars: stars, context: context)
-            summary.counts["adjusted"] = adjusted
-            return summary
-        }
-        guard let finished, case .completed(let summary) = finished.outcome else { return }
-        if !scan.scope.isDateRange, let resume = scan.resumeAfter {
-            settings.update { $0.photos.resumeAfter = resume }
-        }
-        self.scan = nil
-        adjustedStars = [:]
-        notice = "Rated \(summary.counts["rated"] ?? 0) photos. In Photos, filter by 1★ or 2★ to review and delete the low ones."
-    }
-
-    public func startOver() {
-        settings.update { $0.photos.resumeAfter = nil }
-        scopeChanged()
-    }
-
-    public func scopeChanged() {
-        scan = nil
-        notice = nil
-        adjustedStars = [:]
-    }
-
-    private func resolvedScope() throws -> ResolvedPhotoScope {
-        try PhotoScope.resolve(settings.settings.photos.scope, resumeAfter: settings.settings.photos.resumeAfter,
-                               now: now(), timeZone: timeZone)
+    private func scope() throws -> RatingScope {
+        reRate ? try RatingScope.reRate(from: reRateFrom, to: reRateTo, timeZone: timeZone) : .unrated
     }
 }

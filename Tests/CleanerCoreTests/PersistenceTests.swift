@@ -14,11 +14,16 @@ struct AppSettingsTests {
     }
 
     @Test func missingFieldsKeepTheRest() throws {
-        let settings = try decode(#"{"videos": {"olderThanDays": 30}, "photos": {"cameraPhotosPerRun": 500}}"#)
+        let settings = try decode(#"{"videos": {"olderThanDays": 30}, "photos": {"starThresholds": [0, 0.1, 0.2, 0.3]}}"#)
         #expect(settings.videos.olderThanDays == 30)
         #expect(settings.videos.album == AlbumRef(name: "video-to-delete"))
-        #expect(settings.photos.cameraPhotosPerRun == 500)
-        #expect(settings.photos.starThresholds == [-0.3, 0.0, 0.3, 0.6])
+        #expect(settings.photos.albums.duplicated == AlbumRef(name: "photo-duplicated"))
+        #expect(settings.photos.starThresholds == [0, 0.1, 0.2, 0.3])
+    }
+
+    @Test func keysFromEarlierVersionsAreIgnored() throws {
+        let json = #"{"photos": {"cameraPhotosPerRun": 500, "resumeAfter": "2015-03-02T10:00:00Z", "scope": {"kind": "dateRange"}}}"#
+        #expect(try decode(json) == AppSettings())
     }
 
     @Test func malformedFieldFallsBackAlone() throws {
@@ -28,10 +33,9 @@ struct AppSettingsTests {
     }
 
     @Test func outOfRangeValuesAreClamped() throws {
-        let settings = try decode(#"{"videos": {"olderThanDays": 0, "parallelExports": 9}, "photos": {"cameraPhotosPerRun": 5}}"#)
+        let settings = try decode(#"{"videos": {"olderThanDays": 0, "parallelExports": 9}}"#)
         #expect(settings.videos.olderThanDays == 1)
         #expect(settings.videos.parallelExports == 4)
-        #expect(settings.photos.cameraPhotosPerRun == 10)
     }
 
     @Test(arguments: ["[0.1, 0.2]", "[0.6, 0.3, 0.0, -0.3]"])
@@ -42,10 +46,7 @@ struct AppSettingsTests {
 
     @Test func roundTrip() throws {
         var settings = AppSettings()
-        settings.photos.scope.kind = .dateRange
-        settings.photos.scope.from = "2026-10-01"
-        settings.photos.scope.to = "2026-10-31"
-        settings.photos.resumeAfter = Date(timeIntervalSince1970: 1_700_000_000)
+        settings.photos.starThresholds = [-0.2, 0.1, 0.4, 0.7]
         settings.videos.album.id = "X/L0/040"
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
@@ -71,12 +72,12 @@ struct SettingsStoreTests {
         first.flush()
 
         let second = try SettingsStore(directory: dir)
-        second.update { $0.photos.cameraPhotosPerRun = 500 }
+        second.update { $0.photos.starThresholds = [0, 0.1, 0.2, 0.3] }
         second.flush()
 
         let third = try SettingsStore(directory: dir)
         #expect(third.settings.videos.olderThanDays == 30)
-        #expect(third.settings.photos.cameraPhotosPerRun == 500)
+        #expect(third.settings.photos.starThresholds == [0, 0.1, 0.2, 0.3])
     }
 
     @Test func corruptFileIsKeptAsideAndDefaultsLoad() throws {
@@ -112,7 +113,7 @@ struct SettingsStoreTests {
 
     @Test func resetRestoresDefaults() throws {
         let store = try SettingsStore(directory: temporaryDirectory())
-        store.update { $0.photos.scope.kind = .dateRange }
+        store.update { $0.photos.starThresholds = [0, 0.1, 0.2, 0.3] }
         store.reset()
         #expect(store.settings == AppSettings())
     }

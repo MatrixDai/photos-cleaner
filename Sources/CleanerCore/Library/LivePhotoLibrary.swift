@@ -110,14 +110,14 @@ public struct LivePhotoLibrary: PhotoLibraryService {
     public func photos(_ query: PhotoQuery) async -> [LibraryPhoto] {
         let options = PHFetchOptions()
         options.includeHiddenAssets = false
-        var predicates = [NSPredicate(format: "mediaType == %d AND creationDate < %@", PHAssetMediaType.image.rawValue,
-                                      query.upperBound as NSDate)]
-        if let lower = query.lowerBound {
-            predicates.append(NSPredicate(format: query.lowerInclusive ? "creationDate >= %@" : "creationDate > %@", lower as NSDate))
+        var predicates = [NSPredicate(format: "mediaType == %d", PHAssetMediaType.image.rawValue)]
+        if let range = query.range {
+            predicates.append(NSPredicate(format: "creationDate >= %@ AND creationDate < %@",
+                                          range.lowerBound as NSDate, range.upperBound as NSDate))
         }
         if query.unratedOnly { predicates.append(NSPredicate(format: "rating == 0")) }
         options.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: predicates)
-        options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: true)]
+        options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
         var photos: [LibraryPhoto] = []
         PHAsset.fetchAssets(with: options).enumerateObjects { asset, _, _ in
             photos.append(LibraryPhoto(id: asset.localIdentifier, creationDate: asset.creationDate, rating: asset.rating.rawValue,
@@ -140,11 +140,6 @@ public struct LivePhotoLibrary: PhotoLibraryService {
                 PHAssetChangeRequest(for: asset).rating = PHAsset.Rating(rawValue: ratings[asset.localIdentifier] ?? 0) ?? .unset
             }
         }
-    }
-
-    public func image(for photoID: String, side: Int) async -> CGImage? {
-        guard let asset = PHAsset.fetchAssets(withLocalIdentifiers: [photoID], options: nil).firstObject else { return nil }
-        return await LivePhotoAnalyzer.derivative(asset, side: CGFloat(side))
     }
 
     private static func kind(of type: PHAssetResourceType) -> LibraryVideoResource.Kind? {
