@@ -78,10 +78,10 @@ public struct PhotoRatingRun: Sendable {
                     tally.screenshots += 1
                 } else {
                     switch scores[photo.id] {
-                    case .success(let score): pending[photo.id] = StarRater.stars(for: score, thresholds: thresholds)
-                    case .failure(let error):
+                    case .score(let score): pending[photo.id] = StarRater.stars(for: score, thresholds: thresholds)
+                    case .failed(let message):
                         tally.failed += 1
-                        lastError = error.localizedDescription
+                        lastError = message
                     case nil: break
                     }
                 }
@@ -116,14 +116,28 @@ public struct PhotoRatingRun: Sendable {
         pending = [:]
     }
 
-    private func analyze(_ photos: [LibraryPhoto]) async -> [String: Result<Double, any Error>] {
-        await withTaskGroup(of: (String, Result<Double, any Error>).self) { group in
+    private enum Analysis: Sendable {
+        case score(Double)
+        case failed(String)
+    }
+
+    private func analyze(_ photos: [LibraryPhoto]) async -> [String: Analysis] {
+        await withTaskGroup(of: (String, Analysis).self) { group in
             for photo in photos {
-                group.addTask {
-                    do { return (photo.id, .success(try await analyzer.aestheticsScore(photo.id))) } catch { return (photo.id, .failure(error)) }
-                }
+                group.addTask { (photo.id, await analyze(photo)) }
             }
-            return await group.reduce(into: [:]) { $0[$1.0] = $1.1 }
+            var results: [String: Analysis] = [:]
+            for await (id, analysis) in group { results[id] = analysis }
+            return results
+        }
+    }
+
+    // A do/catch that returns from inside a task-group child closure aborts optimized builds (Swift 6.4), so it lives here.
+    private func analyze(_ photo: LibraryPhoto) async -> Analysis {
+        do {
+            return .score(try await analyzer.aestheticsScore(photo.id))
+        } catch {
+            return .failed(error.localizedDescription)
         }
     }
 }
