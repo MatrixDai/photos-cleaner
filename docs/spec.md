@@ -114,25 +114,26 @@ The window is a `NavigationSplitView` with four pages: Videos, Photos, Activity 
 ```
 ┌──────────────────┬───────────────────────────────────────────────────────────┐
 │ VIDEOS           │ Photos · Rating & Similar Shots                           │
-│   Export &       │ [ ] Re-rate photos taken from [2026-10-04] to [2026-11-04]│
-│   Cleanup        │ ⓘ Rates every photo without stars, newest first           │
-│ PHOTOS           ├───────────────────────────────────────────────────────────┤
-│ ▸ Rating &       │       ★     ★★    ★★★    ★★★★   ★★★★★                     │
-│   Similar Shots  │      120    340   1,210   2,050    400                    │
-│ APP              │   4,120 rated · 410 screenshots skipped · 6 failed        │
-│   Activity       │   4,536 of 24,518 photos · now at Mar 2024 · 0:41:12      │
-│   Settings       │                                                           │
+│   Export &       │       ★     ★★    ★★★    ★★★★   ★★★★★                     │
+│   Cleanup        │      120    340   1,210   2,050    400                    │
+│ PHOTOS           │   4,120 rated · 410 screenshots skipped · 6 failed        │
+│ ▸ Rating &       │   Similar shots: 85 groups · 260 photos · 260 added       │
+│   Similar Shots  │   4,536 of 24,518 photos · now at Mar 2024 · 0:41:12      │
+│ APP              ├───────────────────────────────────────────────────────────┤
+│   Activity       │ [✓] De-dup   similar shots go to photo-duplicated         │
+│   Settings       │ [ ] Re-rate photos taken from [2026-10-04] to [2026-11-04]│
+│                  │ ⓘ Rates every photo without stars, newest first           │
 │                  ├───────────────────────────────────────────────────────────┤
-│                  │ [Rate Photos]               ███░░ 4,536/24,518 [Cancel]   │
+│                  │ [Rate Photos]                          ███░░  [Cancel]    │
 ├──────────────────┴───────────────────────────────────────────────────────────┤
-│ Photos: full access ✓ │ Busy: Photos rate │ 4,120 rated · 1★ 120 2★ 340 …    │
+│ Photos: full access ✓ │ Busy: Photos rate · Keeping Mac awake                │
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
 
 Pages:
 
 - **Videos · Export & Cleanup:** older than N days, a results table (date, name, size, status, file) and the action bar: Scan, Export & Mark N, progress, Cancel.
-- **Photos · Rating & Similar Shots:** a Re-rate checkbox with a from–to date range and a hint line; a progress panel (see Photos mode); and the action bar: Rate Photos, progress, Cancel. Phase 4 adds the De-dup checkbox and the similar-shot counts.
+- **Photos · Rating & Similar Shots:** the progress panel at the top (see Photos mode), then the options (De-dup, Re-rate with a from–to date range, and a hint line), then the action bar: Rate Photos, a progress bar and Cancel. The panel is the only place that shows the run's counts; the action bar and status bar don't repeat them.
 - **Activity:** the run log, an album summary (each app album's current size and the change since the last run, e.g. "video-to-delete: 12 videos, 38 fewer than after the last run").
 - **Settings:** a Videos section (export folder with Choose…, Reveal in Finder and writable badge; file name template with live preview; parallel exports; album name), a Photos section (star thresholds, the similar-shots album name) and a Data section (the data folder with Reveal in Finder, and Reset all settings).
 
@@ -140,7 +141,7 @@ Pages:
 
 **Re-rate hint.** With Re-rate checked, the line under the options reads "Every photo in this range is rated again, overwriting its existing stars. Use a short range to try new thresholds." Rate Photos then asks for confirmation before it starts.
 
-**Status bar,** from left: Photos authorization, busy state (with "Keeping Mac awake" while a job runs), then mode-specific detail. On Videos pages that's the export folder's writable state and free space (from `volumeAvailableCapacityForImportantUsageKey`, falling back to `volumeAvailableCapacityKey`, hidden if neither is available). On Photos pages it's the latest run's photos rated and the count at each star. Export & Mark warns when the planned size exceeds free space.
+**Status bar,** from left: Photos authorization, busy state (with "Keeping Mac awake" while a job runs), then mode-specific detail. On Videos pages that's the export folder's writable state and free space (from `volumeAvailableCapacityForImportantUsageKey`, falling back to `volumeAvailableCapacityKey`, hidden if neither is available). Photos pages add nothing: their panel already shows the run. Export & Mark warns when the planned size exceeds free space.
 
 **Writable check.** It runs at launch, when the export folder changes and before each export job. A folder that doesn't exist yet, such as the default `~/Downloads/PhotosCleaner/Videos`, isn't an error: the page shows "Created on first export", and Export & Mark creates it just before its own check. It creates `.photoscleaner-write-test-<uuid>` in the folder, writes 1 byte, reads it back and deletes it. It doesn't inspect the filesystem type.
 

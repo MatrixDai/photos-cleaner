@@ -78,8 +78,10 @@ struct StatusBar: View {
             } else {
                 Text("Idle")
             }
-            Divider().frame(height: 14)
-            Text(detail).lineLimit(1).truncationMode(.middle)
+            if let detail {
+                Divider().frame(height: 14)
+                Text(detail).lineLimit(1).truncationMode(.middle)
+            }
             Spacer()
         }
         .font(.caption)
@@ -97,15 +99,12 @@ struct StatusBar: View {
         }
     }
 
-    private var detail: String {
+    private var detail: String? {
         switch page {
         case .videos:
             "Export folder \(folderState) · \(model.videos.freeSpace.map { bytes($0) + " free" } ?? "free space unknown")"
         case .photos:
-            model.photos.tally.map { tally in
-                "\(tally.rated.formatted()) rated · " + (1...5).map { "\($0)★ \((tally.stars[$0] ?? 0).formatted())" }.joined(separator: "  ")
-                    + (tally.groups > 0 ? " · \(tally.groups.formatted()) similar groups" : "")
-            } ?? "Rates photos without stars, newest first"
+            nil
         case .activity, .settings:
             "Data folder: \(model.dataDirectory.path)"
         }

@@ -86,7 +86,7 @@ public final class PhotoModel {
         switch outcome {
         case .completed:
             if tally?.total == 0 { return scope.isReRate ? "No photos were taken in this range." : "Every photo already has stars." }
-            var text = "Rated \(rated.formatted()) photos. In Photos, filter by 1★ or 2★ to review and delete the low ones."
+            var text = "Rated \(rated.formatted()) photos."
             if let tally, tally.addedToAlbum > 0 {
                 text += " \(tally.addedToAlbum.formatted()) similar shots were added to \"\(settings.settings.photos.albums.duplicated.name)\"."
             }

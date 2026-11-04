@@ -109,20 +109,21 @@ private struct VideoResults: View {
 struct JobProgressView: View {
     let jobs: JobCenter
     let mode: JobMode
+    var showsText = true
 
     var body: some View {
         if let active = jobs.active {
             if active.mode == mode {
-                if let item = jobs.progress?.item { Text(item).lineLimit(1).foregroundStyle(.secondary) }
+                if showsText, let item = jobs.progress?.item { Text(item).lineLimit(1).foregroundStyle(.secondary) }
                 ProgressView(value: Double(jobs.progress?.done ?? 0), total: Double(max(1, jobs.progress?.total ?? 1)))
                     .frame(width: 160)
-                Text("\(jobs.progress?.done ?? 0)/\(jobs.progress?.total ?? 0)").monospacedDigit()
+                if showsText { Text("\(jobs.progress?.done ?? 0)/\(jobs.progress?.total ?? 0)").monospacedDigit() }
                 Button("Cancel") { Task { await jobs.cancel() } }
                     .keyboardShortcut(".", modifiers: .command)
             } else {
                 Text("\(active.mode.title) is busy").foregroundStyle(.secondary)
             }
-        } else if let finished = jobs.lastFinished, finished.job.mode == mode {
+        } else if showsText, let finished = jobs.lastFinished, finished.job.mode == mode {
             Text(describe(finished)).foregroundStyle(.secondary).lineLimit(1)
         }
     }

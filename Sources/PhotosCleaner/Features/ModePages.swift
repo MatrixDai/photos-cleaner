@@ -6,9 +6,9 @@ struct PhotoPage: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            PhotoOptionsView(model: model).padding(16)
-            Divider()
             RatingPanel(model: model)
+            Divider()
+            PhotoOptionsView(model: model).padding(16)
             Divider()
             PhotoActionBar(model: model).padding(12)
         }
@@ -141,7 +141,7 @@ private struct PhotoActionBar: View {
             .disabled(!photos.canRun)
             .keyboardShortcut("r", modifiers: .command)
             Spacer()
-            JobProgressView(jobs: model.jobs, mode: .photos)
+            JobProgressView(jobs: model.jobs, mode: .photos, showsText: false)
         }
         .confirmationDialog("Re-rate every photo in this range?", isPresented: $confirmingReRate) {
             Button("Re-rate") { Task { await photos.run() } }
